@@ -1,6 +1,6 @@
 use super::*;
 use proptest::prelude::*;
-use shared_types::FaniLabError;
+use shared_types::TrustchainError;
 use soroban_sdk::{
     testutils::{Address as _, Events, Ledger as _},
     xdr, Address, Env, Symbol, TryFromVal, Val,
@@ -194,7 +194,7 @@ fn test_kyc_status_update_unauthorized() {
     let attacker = Address::generate(&env);
     let result = client.try_update_driver_kyc_status(&attacker, &driver, &true);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected non-admin caller to fail with Unauthorized"),
     }
 }
@@ -424,7 +424,7 @@ fn test_get_driver_tier_rejects_unregistered_driver() {
     let unregistered = Address::generate(&env);
     let result = client.try_get_driver_tier(&unregistered);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProviderNotFound.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProviderNotFound.into()),
         _ => panic!("Expected get_driver_tier on an unregistered driver to fail"),
     }
 }
@@ -504,7 +504,7 @@ fn test_set_reputation_config_unauthorized() {
         },
     );
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected non-admin caller to fail with Unauthorized"),
     }
 }
@@ -528,7 +528,7 @@ fn test_get_dispute_contract_before_init_returns_not_initialized() {
 
     let result = client.try_get_dispute_contract();
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::NotInitialized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::NotInitialized.into()),
         _ => panic!("Expected NotInitialized before configuring the dispute contract"),
     }
 }
@@ -541,7 +541,7 @@ fn test_dispute_contract_getter_round_trip_and_unauthorized_setter() {
     let attacker = Address::generate(&env);
     let result = client.try_set_dispute_contract(&attacker, &dispute_contract);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected Unauthorized from non-admin setter"),
     }
 
@@ -701,7 +701,7 @@ fn test_deauthorized_caller_is_rejected() {
 
     let result = client.try_increase_reputation(&delivery_id, &driver, &1u64, &1000u32, &false);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected the superseded delivery contract to fail with Unauthorized"),
     }
 }
@@ -714,13 +714,13 @@ fn test_set_cross_contracts_unauthorized() {
 
     let result = client.try_set_delivery_contract(&attacker, &new_contract);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected non-admin caller to fail with Unauthorized"),
     }
 
     let result = client.try_set_dispute_contract(&attacker, &new_contract);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected non-admin caller to fail with Unauthorized"),
     }
 }
@@ -742,13 +742,13 @@ fn test_deauthorized_delivery_contract_rejected_for_reputation_calls() {
     let inc_result =
         client.try_increase_reputation(&delivery_contract, &driver, &2u64, &1000u32, &false);
     match inc_result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected de-authorized increase_reputation to fail with Unauthorized"),
     }
 
     let dec_result = client.try_decrease_reputation(&delivery_contract, &driver, &5u32);
     match dec_result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected de-authorized decrease_reputation to fail with Unauthorized"),
     }
 }
@@ -762,7 +762,7 @@ fn test_set_authorized_contract_requires_admin() {
 
     let result = client.try_set_authorized_contract(&attacker, &target, &true);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected non-admin set_authorized_contract to fail with Unauthorized"),
     }
 }
@@ -777,7 +777,7 @@ fn test_unauthorized_caller_cannot_increase_reputation() {
 
     let result = client.try_increase_reputation(&random, &driver, &1u64, &1000u32, &false);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected unauthorized increase_reputation to fail with Unauthorized"),
     }
 }
@@ -792,7 +792,7 @@ fn test_unauthorized_caller_cannot_decrease_reputation() {
 
     let result = client.try_decrease_reputation(&random, &driver, &5u32);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected unauthorized decrease_reputation to fail with Unauthorized"),
     }
 }
@@ -838,7 +838,7 @@ fn test_unauthorized_caller_cannot_award_reputation() {
 
     let result = client.try_award_reputation(&random, &driver, &5u32);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected unauthorized award_reputation to fail with Unauthorized"),
     }
 }
@@ -858,7 +858,7 @@ fn test_init_already_initialized_rejected() {
     let admin2 = Address::generate(&env);
     let result = client.try_init(&admin2, &delivery_contract, &dispute_contract);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::AlreadyInitialized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::AlreadyInitialized.into()),
         _ => panic!("Expected AlreadyInitialized error"),
     }
 }
@@ -991,7 +991,7 @@ fn test_non_admin_cannot_suspend_driver() {
 
     let result = client.try_suspend_driver(&attacker, &driver);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected Unauthorized for non-admin suspend attempt"),
     }
     // Profile untouched — still active.
@@ -1009,7 +1009,7 @@ fn test_non_admin_cannot_reinstate_driver() {
 
     let result = client.try_reinstate_driver(&attacker, &driver);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected Unauthorized for non-admin reinstate attempt"),
     }
     // Still suspended.
@@ -1058,8 +1058,8 @@ fn test_increase_reputation_still_rejected_while_escrow_paused() {
 
     let result = client.try_increase_reputation(&delivery_id, &driver, &1u64, &1000u32, &false);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 }
 
@@ -1122,7 +1122,7 @@ fn test_double_suspend_returns_invalid_state() {
 
     let result = client.try_suspend_driver(&admin, &driver);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         _ => panic!("Expected InvalidState on double-suspend"),
     }
 }
@@ -1136,7 +1136,7 @@ fn test_reinstate_active_driver_returns_invalid_state() {
 
     let result = client.try_reinstate_driver(&admin, &driver);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         _ => panic!("Expected InvalidState when reinstating an already-active driver"),
     }
 }
@@ -1149,7 +1149,7 @@ fn test_suspend_nonexistent_driver_returns_provider_not_found() {
 
     let result = client.try_suspend_driver(&admin, &ghost);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProviderNotFound.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProviderNotFound.into()),
         _ => panic!("Expected ProviderNotFound for suspend on unregistered driver"),
     }
 }
@@ -1190,7 +1190,7 @@ fn test_suspended_driver_cannot_receive_reputation_increases() {
     let result =
         client.try_increase_reputation(&delivery_contract, &driver, &1u64, &1000u32, &false);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         _ => panic!("Expected InvalidState for increase_reputation on a suspended driver"),
     }
 
@@ -1210,7 +1210,7 @@ fn test_suspended_driver_cannot_receive_reputation_awards() {
 
     let result = client.try_award_reputation(&dispute_contract, &driver, &10u32);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         _ => panic!("Expected InvalidState for award_reputation on a suspended driver"),
     }
     assert_eq!(client.get_driver_profile(&driver).reputation_score, 50);
@@ -1391,7 +1391,7 @@ fn test_reinstate_driver_requires_suspended_status() {
         .try_reinstate_driver(&admin, &driver)
         .unwrap_err()
         .unwrap();
-    assert_eq!(err, FaniLabError::InvalidState.into());
+    assert_eq!(err, TrustchainError::InvalidState.into());
 }
 
 /// Issue #586: reinstate_driver succeeds when driver is Suspended.

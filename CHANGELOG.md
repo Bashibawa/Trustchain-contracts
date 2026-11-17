@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Breaking
-- Shared `Unauthorized`, `AlreadyInitialized`, `NotInitialized`, `InvalidState`, `DeliveryNotFound`, `InsufficientFunds`, `DuplicateDelivery`, and `TimelockNotElapsed` failures now consistently use `FaniLabError` across contracts instead of contract-specific duplicate variants. `TimelockNotElapsed` is assigned shared code 13; integrations should resolve these shared errors against the `FaniLabError` mapping.
+- Shared `Unauthorized`, `AlreadyInitialized`, `NotInitialized`, `InvalidState`, `DeliveryNotFound`, `InsufficientFunds`, `DuplicateDelivery`, and `TimelockNotElapsed` failures now consistently use `TrustchainError` across contracts instead of contract-specific duplicate variants. `TimelockNotElapsed` is assigned shared code 13; integrations should resolve these shared errors against the `TrustchainError` mapping.
 
 ### Security
 - `identity_reputation_contract::increase_reputation` and `award_reputation` now reject with `InvalidState` while the target driver is suspended, freezing a suspended driver's profile so no reputation can be earned until `reinstate_driver` restores it. `decrease_reputation` is deliberately **not** gated — disciplinary penalties (e.g. a dispute ruling against the driver) must still land while a driver is suspended, otherwise suspension would shield wrongdoers from punishment. Regression tests pin the gate, the penalty exemption, and that reinstatement resumes scoring from the preserved score.
@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `escrow_contract::create_escrows_batch` now enforces the same guards as `create_escrow`: the batch token must match `ProtocolConfig::token` (`InvalidToken`) and every element amount must be positive (`InvalidAmount`) (Issue #189)
 
 ### Removed
-- **BREAKING:** `FaniLabError::EscrowLocked` (discriminant 7) and `FaniLabError::InvalidAddress` (discriminant 10) — dead error variants never returned by any contract in the workspace. Off-chain code matching on these discriminant values should be updated; the numeric codes are not reused by other variants.
+- **BREAKING:** `TrustchainError::EscrowLocked` (discriminant 7) and `TrustchainError::InvalidAddress` (discriminant 10) — dead error variants never returned by any contract in the workspace. Off-chain code matching on these discriminant values should be updated; the numeric codes are not reused by other variants.
 - `escrow_contract::get_status` — dead stub that always returned `DeliveryStatus::Pending`. Use `get_escrow(id).status` instead.
 - Comprehensive deployment documentation
 - API reference documentation

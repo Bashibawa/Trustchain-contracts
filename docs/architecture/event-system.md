@@ -1,8 +1,8 @@
-# FaniLab Centralized Event System
+# Trustchain Centralized Event System
 
 ## Overview
 
-The FaniLab contracts mostly emit on-chain events through the centralized `shared_types::events` helpers, but the live codebase also contains a number of inline topic strings for events that were added before the consolidation or that remain special-case topics. The authoritative source of truth is therefore the actual code, not the assumption that every topic must be routed through one helper module.
+The Trustchain contracts mostly emit on-chain events through the centralized `shared_types::events` helpers, but the live codebase also contains a number of inline topic strings for events that were added before the consolidation or that remain special-case topics. The authoritative source of truth is therefore the actual code, not the assumption that every topic must be routed through one helper module.
 
 Most event emits follow this pattern:
 1. A **topic helper** from `shared_types::events` — e.g., `events::delivery_created(&env)`

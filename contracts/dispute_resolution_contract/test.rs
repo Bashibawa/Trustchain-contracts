@@ -1,7 +1,7 @@
 extern crate std;
 
 use super::*;
-use shared_types::{DeliveryId, DeliveryRecord, DeliveryStatus, FaniLabError};
+use shared_types::{DeliveryId, DeliveryRecord, DeliveryStatus, TrustchainError};
 use soroban_sdk::{
     contract, contractimpl,
     testutils::{Address as _, Deployer as _, Events, Ledger},
@@ -294,14 +294,14 @@ fn test_identity_reputation_getter_round_trip_and_unauthorized_setter() {
 
     let result = dispute_client.try_get_identity_reputation_contract();
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::NotInitialized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::NotInitialized.into()),
         _ => panic!("Expected NotInitialized before configuring the identity contract"),
     }
 
     let attacker = Address::generate(&env);
     let result = dispute_client.try_set_identity_reputation_contract(&attacker, &identity_contract);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected Unauthorized from non-admin setter"),
     }
 
@@ -340,7 +340,7 @@ fn test_admin_roster_changes_require_distinct_approvals() {
     assert!(!dispute_client.is_admin(&new_admin));
     let duplicate_approval = dispute_client.try_add_admin(&admin, &new_admin);
     match duplicate_approval {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         other => panic!("expected duplicate-approver rejection, got {other:?}"),
     }
     assert!(!dispute_client.is_admin(&new_admin));
@@ -354,7 +354,7 @@ fn test_admin_roster_changes_require_distinct_approvals() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #5)")] // FaniLabError::InvalidState
+#[should_panic(expected = "HostError: Error(Contract, #5)")] // TrustchainError::InvalidState
 fn test_admin_cannot_consolidate_roster_to_self() {
     // Repeating a removal proposal from the same admin cannot count as a
     // second signature.
@@ -386,7 +386,7 @@ fn test_admin_removal_still_works_while_another_admin_remains() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #5)")] // FaniLabError::InvalidState
+#[should_panic(expected = "HostError: Error(Contract, #5)")] // TrustchainError::InvalidState
 fn test_remove_last_admin_rejected() {
     let (_env, admin, _, _, _, _, _, dispute_client) = setup_test();
 
@@ -423,7 +423,7 @@ fn test_remove_nonexistent_admin_rejected() {
     let stranger = Address::generate(&env);
     let result = dispute_client.try_remove_admin(&admin, &stranger);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         other => panic!("expected InvalidState when removing a non-admin, got {other:?}"),
     }
 
@@ -440,7 +440,7 @@ fn test_remove_nonexistent_admin_rejected() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_unauthorized_add_admin_fails() {
     let (env, _, sender, _, _, _, _, dispute_client) = setup_test();
     let attacker = sender;
@@ -469,7 +469,7 @@ fn test_add_admin_rejected_at_max_admins() {
     let extra = Address::generate(&env);
     let result = dispute_client.try_add_admin(&admin, &extra);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::LimitExceeded.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::LimitExceeded.into()),
         other => panic!("expected LimitExceeded at MAX_ADMINS, got {other:?}"),
     }
 
@@ -565,7 +565,7 @@ fn test_raise_dispute_delivered_within_time_limit() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #5)")] // FaniLabError::InvalidState
+#[should_panic(expected = "HostError: Error(Contract, #5)")] // TrustchainError::InvalidState
 fn test_raise_dispute_delivered_exceeds_time_limit() {
     let (env, _admin, sender, recipient, driver, delivery_id, escrow_id, dispute_client) =
         setup_test();
@@ -612,7 +612,7 @@ fn test_update_dispute_time_limit_getter_returns_updated_value() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #5)")] // FaniLabError::InvalidState
+#[should_panic(expected = "HostError: Error(Contract, #5)")] // TrustchainError::InvalidState
 fn test_updated_dispute_time_limit_shortens_delivered_dispute_window() {
     let (env, admin, sender, recipient, driver, delivery_id, escrow_id, dispute_client) =
         setup_test();
@@ -773,7 +773,7 @@ fn test_high_value_dispute_requires_two_distinct_mediators() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_unauthorized_resolve_dispute_fails() {
     let (env, _admin, sender, recipient, driver, delivery_id, escrow_id, dispute_client) =
         setup_test();
@@ -838,7 +838,7 @@ fn test_add_evidence_hash_success() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_add_evidence_unauthorized_fails() {
     let (env, _admin, sender, recipient, _driver, delivery_id, _escrow_id, dispute_client) =
         setup_test();
@@ -888,7 +888,7 @@ fn test_add_evidence_hash_up_to_cap_succeeds() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #12)")] // FaniLabError::LimitExceeded
+#[should_panic(expected = "HostError: Error(Contract, #12)")] // TrustchainError::LimitExceeded
 fn test_add_evidence_hash_beyond_cap_rejected() {
     let (env, _admin, sender, recipient, _driver, delivery_id, _escrow_id, dispute_client) =
         setup_test();
@@ -1016,7 +1016,7 @@ fn test_evidence_quota_exhaustion_is_scoped_to_offending_party() {
     // Sender is full — its next submission fails with LimitExceeded.
     let extra = soroban_sdk::BytesN::from_array(&env, &[0xF0; 32]);
     match dispute_client.try_add_evidence_hash(&sender, &did(22), &extra) {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::LimitExceeded.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::LimitExceeded.into()),
         other => panic!("expected LimitExceeded for the full party, got {other:?}"),
     }
 
@@ -1071,7 +1071,7 @@ fn test_evidence_total_storage_bounded_across_all_parties() {
 
 /// Existing behavior: evidence cannot be added once a dispute leaves `Open`.
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #5)")] // FaniLabError::InvalidState
+#[should_panic(expected = "HostError: Error(Contract, #5)")] // TrustchainError::InvalidState
 fn test_evidence_cannot_be_added_to_resolved_dispute() {
     let (env, admin, sender, recipient, driver, delivery_id, escrow_id, dispute_client) =
         setup_test();
@@ -1538,7 +1538,7 @@ fn test_dispute_reward_respects_max_reputation() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_unauthorized_resolve_pay_driver_fails() {
     let (env, _admin, sender, recipient, driver, delivery_id, escrow_id, dispute_client) =
         setup_test();
@@ -1581,7 +1581,7 @@ fn test_dispute_reputation_penalty_configurable() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_unauthorized_set_dispute_reputation_penalty_fails() {
     let (_env, _admin, sender, _, _, _, _, dispute_client) = setup_test();
 
@@ -1619,13 +1619,13 @@ fn test_reputation_config_setters_reject_out_of_bounds_values() {
     // 51 > MAX_DISPUTE_REPUTATION_PENALTY (IDENTITY_MAX_REPUTATION / 2 = 50)
     let result = dispute_client.try_set_dispute_reputation_reward(&admin, &51);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         other => panic!("expected InvalidState for oversized reward, got {other:?}"),
     }
 
     let result = dispute_client.try_set_dispute_split_penalty(&admin, &51);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         other => panic!("expected InvalidState for oversized split penalty, got {other:?}"),
     }
 
@@ -1635,7 +1635,7 @@ fn test_reputation_config_setters_reject_out_of_bounds_values() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_unauthorized_set_dispute_reputation_reward_fails() {
     let (_env, _admin, sender, _, _, _, _, dispute_client) = setup_test();
 
@@ -1643,7 +1643,7 @@ fn test_unauthorized_set_dispute_reputation_reward_fails() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_unauthorized_set_dispute_split_penalty_fails() {
     let (_env, _admin, sender, _, _, _, _, dispute_client) = setup_test();
 
@@ -1778,7 +1778,7 @@ fn test_configured_values_apply_to_split_and_pay_driver_paths() {
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_unauthorized_resolve_split_funds_fails() {
     let (_env, _admin, sender, _recipient, _driver, _delivery_id, _escrow_id, dispute_client) =
         setup_test();
@@ -1874,7 +1874,7 @@ fn test_dispute_window_limits_enforce_one_year_maximum() {
         &MAX_DISPUTE_WINDOW,
     );
     match init_result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         other => panic!("expected InvalidState for an over-limit init value, got {other:?}"),
     }
     let resolution_init_result = invalid_client.try_init(
@@ -1885,7 +1885,7 @@ fn test_dispute_window_limits_enforce_one_year_maximum() {
         &(MAX_DISPUTE_WINDOW + 1),
     );
     match resolution_init_result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         other => panic!("expected InvalidState for an over-limit resolution value, got {other:?}"),
     }
 }
@@ -2199,7 +2199,7 @@ fn test_force_resolve_dispute_with_non_paused_escrow_fails() {
 /// Test that force_resolve_dispute fails if called by someone who is not a party
 /// to the delivery (sender, recipient, or driver).
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_force_resolve_dispute_unauthorized_caller_fails() {
     let (env, _admin, sender, recipient, driver, delivery_id, escrow_id, dispute_client) =
         setup_test();
@@ -2287,7 +2287,7 @@ fn test_force_resolve_dispute_non_open_dispute_fails() {
 /// Without this test, future refactoring could silently drop the is_admin
 /// guard on this security-relevant parameter setter.
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_unauthorized_update_dispute_time_limit_fails() {
     let (_env, _admin, sender, _, _, _, _, dispute_client) = setup_test();
 
@@ -2299,7 +2299,7 @@ fn test_unauthorized_update_dispute_time_limit_fails() {
 /// Without this test, future refactoring could silently drop the is_admin
 /// guard on this security-relevant parameter setter.
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_unauthorized_set_dispute_resolution_limit_fails() {
     let (_env, _admin, sender, _, _, _, _, dispute_client) = setup_test();
 
@@ -2339,8 +2339,8 @@ fn test_set_delivery_contract_rejects_non_admin() {
     let attacker = Address::generate(&env);
     let result = dispute_client.try_set_delivery_contract(&attacker, &Address::generate(&env));
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized from non-admin delivery setter"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized from non-admin delivery setter"),
     }
 
     assert_eq!(dispute_client.get_delivery_contract(), original_delivery);
@@ -2370,8 +2370,8 @@ fn test_set_escrow_contract_rejects_non_admin() {
     let attacker = Address::generate(&env);
     let result = dispute_client.try_set_escrow_contract(&attacker, &Address::generate(&env));
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized from non-admin escrow setter"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized from non-admin escrow setter"),
     }
 
     assert_eq!(dispute_client.get_escrow_contract(), original_escrow);
@@ -2696,7 +2696,7 @@ fn test_split_funds_rejects_sender_share_endpoints() {
     for &bps in &[0u32, 10000, 10001] {
         let result = dispute_client.try_resolve_dispute_split_funds(&admin, &did(1), &bps);
         match result {
-            Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
+            Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
             other => panic!("expected InvalidState for sender_share_bps={bps}, got {other:?}"),
         }
         // Rejected before any state mutation: the dispute is still Open.

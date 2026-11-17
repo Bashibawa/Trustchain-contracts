@@ -1,7 +1,7 @@
 # Error Code Reference
 
 Canonical, single-source-of-truth reference for every `#[contracterror]` enum in the
-FaniLab workspace. `docs/API.md`'s "Error Codes by Contract" section links here rather
+Trustchain workspace. `docs/API.md`'s "Error Codes by Contract" section links here rather
 than maintaining a second copy — update this file when an error variant is added,
 removed, or renumbered, and both docs stay accurate.
 
@@ -16,9 +16,9 @@ needs to know which contract's enum to look the code up against. This file lists
 enum in the workspace so any `(contract, code)` pair can be resolved in one place.
 
 Two contracts — `dispute_resolution_contract` and `identity_reputation_contract` —
-define no local error enum and raise only the shared `FaniLabError` below.
+define no local error enum and raise only the shared `TrustchainError` below.
 
-## `FaniLabError` — shared across all six contracts (`shared_types`)
+## `TrustchainError` — shared across all six contracts (`shared_types`)
 
 | Code | Variant | Meaning |
 |------|---------|---------|
@@ -51,7 +51,7 @@ they are not reserved for anything and should not be inferred to mean "no error.
 
 Shared failures such as `InvalidState`, `DeliveryNotFound`, `InsufficientFunds`,
 `DuplicateDelivery`, `TimelockNotElapsed`, `Unauthorized`, `NotInitialized`, and
-`ProtocolPaused` use `FaniLabError`.
+`ProtocolPaused` use `TrustchainError`.
 
 ## `DeliveryError` — `delivery_contract`
 
@@ -64,7 +64,7 @@ Shared failures such as `InvalidState`, `DeliveryNotFound`, `InsufficientFunds`,
 | 6 | `EscrowNotLocked` | The escrow is absent or not locked when funded escrow is required. |
 
 Shared failures such as `InvalidState`, `Unauthorized`, `DeliveryNotFound`, and
-`NotInitialized` use `FaniLabError`.
+`NotInitialized` use `TrustchainError`.
 
 ## `FleetError` — `fleet_management_contract`
 
@@ -82,7 +82,7 @@ Shared failures such as `InvalidState`, `Unauthorized`, `DeliveryNotFound`, and
 | 14 | `RosterFull` | The fleet already holds `MAX_ROSTER_SIZE` active drivers. |
 
 Shared failures such as `AlreadyInitialized`, `NotInitialized`, `Unauthorized`, and
-`TimelockNotElapsed` use `FaniLabError`.
+`TimelockNotElapsed` use `TrustchainError`.
 
 ## `SettlementError` — `settlement_contract`
 
@@ -98,11 +98,11 @@ Shared failures such as `AlreadyInitialized`, `NotInitialized`, `Unauthorized`, 
 
 ## Contracts with no local error enum
 
-`dispute_resolution_contract` and `identity_reputation_contract` raise `FaniLabError`
+`dispute_resolution_contract` and `identity_reputation_contract` raise `TrustchainError`
 exclusively — look up any error code they return in the shared table above.
 
 ## Interpreting a raw error
 
 Given `Error(Contract, #N)`, identify which contract's invocation raised it. Resolve
-contract-specific errors against that contract's table; shared `FaniLabError` errors use
+contract-specific errors against that contract's table; shared `TrustchainError` errors use
 the same code mapping in every contract.

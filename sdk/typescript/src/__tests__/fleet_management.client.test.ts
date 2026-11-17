@@ -174,7 +174,7 @@ describe('FleetManagementClient set_escrow_contract event (Issue #487)', () => {
   it('propagates a contract error from set_escrow_contract to the caller', async () => {
     jest
       .spyOn(ContractInvoker.prototype, 'call')
-      .mockRejectedValue(new Error('Soroban simulation failed: FaniLabError::Unauthorized'));
+      .mockRejectedValue(new Error('Soroban simulation failed: TrustchainError::Unauthorized'));
 
     await expect(
       client().setEscrowContract({ admin: ADMIN, escrowContract: ESCROW_ADDR }),
@@ -205,7 +205,7 @@ describe('FleetManagementClient set_identity_contract event (Issue #487)', () =>
   it('propagates a contract error from set_identity_contract to the caller', async () => {
     jest
       .spyOn(ContractInvoker.prototype, 'call')
-      .mockRejectedValue(new Error('Soroban simulation failed: FaniLabError::Unauthorized'));
+      .mockRejectedValue(new Error('Soroban simulation failed: TrustchainError::Unauthorized'));
 
     await expect(
       client().setIdentityContract({ admin: ADMIN, identityContract: IDENTITY_ADDR }),

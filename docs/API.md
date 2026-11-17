@@ -1447,8 +1447,8 @@ state-mutating functions.
 - `from: DeliveryStatus` - Current status
 - `to: DeliveryStatus` - Requested next status
 
-**Returns:** `Result<(), FaniLabError>` — `Ok(())` when the transition is legal,
-`Err(FaniLabError::InvalidState)` otherwise
+**Returns:** `Result<(), TrustchainError>` — `Ok(())` when the transition is legal,
+`Err(TrustchainError::InvalidState)` otherwise
 
 **Allowed transitions:**
 
@@ -3237,9 +3237,9 @@ pub struct DriverProfile {
 
 ### Errors
 
-#### `FaniLabError`
+#### `TrustchainError`
 ```rust
-pub enum FaniLabError {
+pub enum TrustchainError {
     Unauthorized = 1,           // Not authorized for this operation
     AlreadyInitialized = 2,     // Contract already initialized
     NotInitialized = 3,         // Contract not initialized
@@ -3303,7 +3303,7 @@ change.
 - Max storage entry size: 64 KB
 - Max ledger entries per invocation: 256
 
-### FaniLab Constraints
+### Trustchain Constraints
 - Platform fee: 0% - 10% (10,000 basis points)
 - Delivery ID: u64 (18 quintillion max)
 - String fields: Limited by storage entry size

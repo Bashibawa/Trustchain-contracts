@@ -1,6 +1,6 @@
 # Trustchain-contracts 📦🔗
 
-> **FaniLab** ni Jukwaa la Uendeshaji na Uhifadhi wa Pesa Powered by Blockchain, inayoundwa kuunganisha watu na biashara zinazohitaji kusafirisha bidhaa na wafanyabizanishi wa usafiri walay vailable. Hazina hii ina Soroban Smart Contracts za Stellar ambazo zina nguvu za mfumo wa uhifadhi wa Pesa Blockchain unaotumiwa na jukwaa la uendeshaji.
+> **Trustchain** ni Jukwaa la Uendeshaji na Uhifadhi wa Pesa Powered by Blockchain, inayoundwa kuunganisha watu na biashara zinazohitaji kusafirisha bidhaa na wafanyabizanishi wa usafiri walay vailable. Hazina hii ina Soroban Smart Contracts za Stellar ambazo zina nguvu za mfumo wa uhifadhi wa Pesa Blockchain unaotumiwa na jukwaa la uendeshaji.
 
 ---
 
@@ -14,7 +14,7 @@
 
 ## 🌍 Muhtasari
 
-Hazina hii ina mikataba ya Soroban ya FaniLab ya escrow, utoaji, mzozo, sifa na utawala. Inafuatia muundo wa sasa wa workspace na kusawazishwa na README ya Kiingereza.
+Hazina hii ina mikataba ya Soroban ya Trustchain ya escrow, utoaji, mzozo, sifa na utawala. Inafuatia muundo wa sasa wa workspace na kusawazishwa na README ya Kiingereza.
 
 Mradi umewekwa katika mikataba sita ya Rust na maktaba moja ya kawaida:
 - `escrow_contract`
@@ -222,12 +222,12 @@ Mradi huu unatolewa chini ya Leseni ya MIT - angalia faili la `LICENSE` kwa taar
 
 ## 📞 Mawasiliano & Jamii
 
-- **Tovuti**: https://fanilab.com
-- **Barua pepe**: contact@fanilab.com
-- **Twitter**: [@FaniLabHQ](https://twitter.com/FaniLabHQ)
-- **Discord**: [Jibu jamii yetu](https://discord.gg/fanilab)
-- **GitHub**: [Shirika la FaniLab](https://github.com/fanilab)
+- **Tovuti**: https://trustchain.com
+- **Barua pepe**: contact@trustchain.com
+- **Twitter**: [@TrustchainHQ](https://twitter.com/TrustchainHQ)
+- **Discord**: [Jibu jamii yetu](https://discord.gg/trustchain)
+- **GitHub**: [Shirika la Trustchain](https://github.com/trustchain)
 
 ---
 
-Kuundwa kwa ❤️ na Wanakioski wa FaniLab | Inapatia nguvu na Stellar Soroban
+Kuundwa kwa ❤️ na Wanakioski wa Trustchain | Inapatia nguvu na Stellar Soroban

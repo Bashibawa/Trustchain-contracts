@@ -3,7 +3,7 @@ import { DriverFleetStatus, FleetProfile, PendingTreasuryChange } from './common
 /**
  * Contract-specific error codes raised by
  * `fleet_management_contract::FleetError`. Distinct from the shared
- * `FaniLabError` codes in `common.types.ts`.
+ * `TrustchainError` codes in `common.types.ts`.
  */
 export const FleetErrorCodes = {
   FleetNotFound: 4,

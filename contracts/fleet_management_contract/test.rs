@@ -210,8 +210,8 @@ fn test_admin_reassign_fleet_owner_requires_admin() {
 
     let result = client.try_admin_reassign_fleet_owner(&attacker, &fleet_id, &new_owner);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 
     assert_eq!(client.get_fleet(&fleet_id).owner, owner);
@@ -326,8 +326,8 @@ fn test_admin_force_update_treasury_requires_admin() {
 
     let result = client.try_admin_force_update_treasury(&attacker, &fleet_id, &new_treasury);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 
     assert_eq!(client.get_fleet(&fleet_id).treasury, treasury);
@@ -1434,7 +1434,7 @@ fn test_configure_signers_requires_threshold() {
     // Fails without co-signers
     let result = client.try_configure_signers(&owner, &fleet_id, &new_signers, &1u32, &soroban_sdk::Vec::new(&env));
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected threshold error"),
     }
 
@@ -1463,8 +1463,8 @@ fn test_configure_signers_unauthorized_not_owner() {
 
     let result = client.try_configure_signers(&attacker, &fleet_id, &new_signers, &2u32, &soroban_sdk::Vec::new(&env));
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 }
 
@@ -1503,8 +1503,8 @@ fn test_update_fleet_treasury_unauthorized_not_signer() {
     let result =
         client.try_update_fleet_treasury(&attacker, &fleet_id, &new_treasury, &no_co_signers(&env));
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 }
 
@@ -1644,8 +1644,8 @@ fn test_add_driver_unauthorized_not_signer() {
     let result =
         client.try_add_driver_to_fleet(&attacker, &fleet_id, &driver, &no_co_signers(&env));
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 }
 

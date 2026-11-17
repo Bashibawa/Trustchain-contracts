@@ -63,7 +63,7 @@ Trustchain-contracts are undergoing production hardening. The critical access-co
 - [x] TTL management for storage
 - [x] Daily security audits (cargo-audit)
 - [x] Protocol-wide pause mechanism for emergency response (issue #31 ✅)
-- [x] `freeze_funds` restricted to the configured `dispute_resolution_contract` caller; unauthorized callers receive `FaniLabError::Unauthorized` — issue #7 ✅
+- [x] `freeze_funds` restricted to the configured `dispute_resolution_contract` caller; unauthorized callers receive `TrustchainError::Unauthorized` — issue #7 ✅
 - [x] `test_freeze_funds_unauthorized_caller_rejected` regression test in place
 - [x] Dispute resolution path structurally sound — issue #8 ✅
 

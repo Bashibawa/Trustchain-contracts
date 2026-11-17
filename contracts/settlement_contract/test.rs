@@ -234,7 +234,7 @@ fn test_init_rejects_duplicate_initialization() {
     let hijacked_escrow = Address::generate(&env);
     let result = client.try_init(&hijacker, &hijacked_escrow);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::AlreadyInitialized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::AlreadyInitialized.into()),
         _ => panic!("Expected AlreadyInitialized on duplicate init"),
     }
 
@@ -253,7 +253,7 @@ fn test_get_admin_before_init_returns_not_initialized() {
 
     let result = client.try_get_admin();
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::NotInitialized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::NotInitialized.into()),
         _ => panic!("Expected NotInitialized from get_admin before init"),
     }
 }
@@ -276,7 +276,7 @@ fn test_execute_settlement_swap_requires_initialization() {
     let result =
         client.try_execute_settlement_swap(&caller, &token, &token, &recipient, &100i128, &90i128);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::NotInitialized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::NotInitialized.into()),
         _ => panic!("Expected NotInitialized from un-initialized execute_settlement_swap"),
     }
 }
@@ -284,7 +284,7 @@ fn test_execute_settlement_swap_requires_initialization() {
 /// Only the configured escrow contract may call execute_settlement_swap; any
 /// other caller is rejected with Unauthorized before the stub guard fires.
 ///
-/// Note: `FaniLabError::Unauthorized` and `SettlementError::SwapNotImplemented`
+/// Note: `TrustchainError::Unauthorized` and `SettlementError::SwapNotImplemented`
 /// share wire discriminant #1 because this contract mixes the shared error
 /// enum with its local one, so this assertion pins the discriminant rather
 /// than being able to tell the two variants apart on the wire.
@@ -306,7 +306,7 @@ fn test_execute_settlement_swap_rejects_non_escrow_caller() {
     let result = client
         .try_execute_settlement_swap(&intruder, &token, &token, &recipient, &100i128, &90i128);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected Unauthorized for a non-escrow caller"),
     }
 }

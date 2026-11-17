@@ -1,6 +1,6 @@
-# FaniLab Documentation Translations
+# Trustchain Documentation Translations
 
-This document outlines the available translations of FaniLab documentation.
+This document outlines the available translations of Trustchain documentation.
 
 ## Supported Languages
 
@@ -107,4 +107,4 @@ If you notice issues with any translation:
 
 **Last Updated**: July 2026
 
-We appreciate all contributions to making FaniLab documentation accessible to our global community!
+We appreciate all contributions to making Trustchain documentation accessible to our global community!

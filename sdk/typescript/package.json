@@ -1,5 +1,5 @@
 {
-  "name": "@fanilab/sdk",
+  "name": "@trustchain/sdk",
   "version": "0.2.0",
   "private": true,
   "description": "TypeScript SDK for Trustchain-contracts on Stellar Soroban",
@@ -18,7 +18,7 @@
     "delivery",
     "blockchain"
   ],
-  "author": "FaniLab",
+  "author": "Trustchain",
   "license": "MIT",
   "dependencies": {
     "@stellar/stellar-sdk": "^17.2.1"

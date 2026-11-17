@@ -1,4 +1,4 @@
-# FaniLab TypeScript SDK
+# Trustchain TypeScript SDK
 
 Typed SDK for interacting with Trustchain-contracts on Stellar Soroban.
 
@@ -7,7 +7,7 @@ Typed SDK for interacting with Trustchain-contracts on Stellar Soroban.
 ## Installation
 
 ```bash
-npm install @fanilab/sdk
+npm install @trustchain/sdk
 ```
 
 ## SDK Status
@@ -37,7 +37,7 @@ import {
   IdentityReputationClient,
   FleetManagementClient,
   SettlementClient,
-} from '@fanilab/sdk';
+} from '@trustchain/sdk';
 import { Keypair } from '@stellar/stellar-sdk';
 
 const keypair = Keypair.fromSecret('SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX');
@@ -59,7 +59,7 @@ const settlementClient = new SettlementClient('CSTL...', invocation);
 ### Create an Escrow
 
 ```typescript
-import { EscrowClient } from '@fanilab/sdk';
+import { EscrowClient } from '@trustchain/sdk';
 
 const client = new EscrowClient('CABC...');
 
@@ -94,7 +94,7 @@ console.log(escrow.amount); // BigInt(1_000_000_000)
 ### Raise and Resolve a Dispute
 
 ```typescript
-import { DisputeResolutionClient } from '@fanilab/sdk';
+import { DisputeResolutionClient } from '@trustchain/sdk';
 
 const disputeClient = new DisputeResolutionClient('CDIS...', invocation);
 
@@ -118,7 +118,7 @@ console.log(dispute.status); // DisputeStatus.Resolved
 ### Manage a Fleet
 
 ```typescript
-import { FleetManagementClient } from '@fanilab/sdk';
+import { FleetManagementClient } from '@trustchain/sdk';
 
 const fleetClient = new FleetManagementClient('CFLT...', invocation);
 
@@ -147,7 +147,7 @@ error enum (for example `EscrowError`, `DeliveryError`, `DisputeResolutionError`
 `FleetManagementError`, and `SettlementError`).
 
 ```typescript
-import { EscrowClient, EscrowError } from '@fanilab/sdk';
+import { EscrowClient, EscrowError } from '@trustchain/sdk';
 
 try {
   await client.releaseEscrow({ caller: 'GA123...', deliveryId: BigInt(1) });

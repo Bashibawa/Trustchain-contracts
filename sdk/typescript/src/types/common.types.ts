@@ -135,7 +135,7 @@ export interface DisputeCase {
   resolvedBy?: string;
 }
 
-export interface FaniLabError {
+export interface TrustchainError {
   code: number;
   message: string;
 }

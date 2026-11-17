@@ -929,7 +929,7 @@ fn test_mark_in_transit_succeeds_with_locked_escrow() {
 /// authorization guards, so a non-assigned caller still fails as Unauthorized
 /// rather than leaking an escrow error.
 #[test]
-#[should_panic(expected = "1")] // FaniLabError::Unauthorized
+#[should_panic(expected = "1")] // TrustchainError::Unauthorized
 fn test_mark_in_transit_escrow_check_does_not_mask_authorization() {
     let env = Env::default();
     let (client, shipper, driver, recipient, _, _) = setup_full(&env);
@@ -978,8 +978,8 @@ fn test_raise_dispute_direct_user_call_is_unauthorized() {
     for party in [shipper.clone(), recipient.clone(), driver.clone(), outsider] {
         let result = client.try_raise_dispute(&party, &delivery_id);
         match result {
-            Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-            _ => panic!("Expected FaniLabError::Unauthorized for a direct user call"),
+            Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+            _ => panic!("Expected TrustchainError::Unauthorized for a direct user call"),
         }
     }
 
@@ -1095,7 +1095,7 @@ fn test_reject_assign_driver_as_recipient() {
 }
 
 #[test]
-#[should_panic(expected = "1")] // FaniLabError::Unauthorized — driver is not the recipient
+#[should_panic(expected = "1")] // TrustchainError::Unauthorized — driver is not the recipient
 fn test_reject_confirm_delivery_from_driver() {
     let env = Env::default();
     let (client, shipper, driver, recipient, _, _) = setup_full(&env);
@@ -1773,7 +1773,7 @@ fn test_delivery_state_unchanged_after_raise_dispute_escrow_failure() {
 
 /// Issue #455: `raise_dispute` must reject a paused escrow locally, with the
 /// delivery contract's own `ProtocolPaused` precondition failure, before
-/// reaching the cross-contract call.  `FaniLabError::ProtocolPaused == 11`.
+/// reaching the cross-contract call.  `TrustchainError::ProtocolPaused == 11`.
 #[test]
 #[should_panic(expected = "Error(Contract, #11)")]
 fn test_raise_dispute_rejected_when_escrow_paused() {
@@ -1831,8 +1831,8 @@ fn test_raise_dispute_paused_rejection_is_local_and_leaves_state_intact() {
 
     let result = client.try_raise_dispute(&shipper, &delivery_id);
     match result {
-        Err(Ok(err)) => assert_eq!(err, shared_types::FaniLabError::ProtocolPaused.into()),
-        other => panic!("Expected FaniLabError::ProtocolPaused, got {other:?}"),
+        Err(Ok(err)) => assert_eq!(err, shared_types::TrustchainError::ProtocolPaused.into()),
+        other => panic!("Expected TrustchainError::ProtocolPaused, got {other:?}"),
     }
 
     assert_eq!(
@@ -2325,9 +2325,9 @@ fn test_early_delivery_confirmation() {
     let result = client.try_cancel_delivery(&shipper, &delivery_id);
     match result {
         Err(Ok(err)) => {
-            assert_eq!(err, FaniLabError::InvalidState.into());
+            assert_eq!(err, TrustchainError::InvalidState.into());
         }
-        _ => panic!("Expected FaniLabError::InvalidState when cancelling disputed delivery"),
+        _ => panic!("Expected TrustchainError::InvalidState when cancelling disputed delivery"),
     }
     env.ledger().with_mut(|l| {
         l.timestamp = estimated_time - 86400;
@@ -2744,8 +2744,8 @@ fn test_set_escrow_contract_rejects_non_admin() {
 
     let result = client.try_set_escrow_contract(&attacker, &new_escrow);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 
     assert_eq!(client.get_escrow_contract(), escrow_id);
@@ -2830,8 +2830,8 @@ fn test_set_dispute_resolution_contract_rejects_non_admin() {
 
     let result = client.try_set_dispute_resolution_contract(&attacker, &new_dispute);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 
     assert_eq!(client.get_dispute_resolution_contract(), configured);
@@ -2856,8 +2856,8 @@ fn test_raise_dispute_without_dispute_contract_is_not_initialized() {
 
     let result = client.try_raise_dispute(&admin, &delivery_id);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::NotInitialized.into()),
-        _ => panic!("Expected FaniLabError::NotInitialized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::NotInitialized.into()),
+        _ => panic!("Expected TrustchainError::NotInitialized"),
     }
 }
 
@@ -2874,8 +2874,8 @@ fn test_raise_dispute_rejects_unauthorized_caller() {
     let unauthorized = Address::generate(&env);
     let result = client.try_raise_dispute(&unauthorized, &delivery_id);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 }
 
@@ -2917,8 +2917,8 @@ fn test_resolve_dispute_rejects_unauthorized_caller() {
     let unauthorized = Address::generate(&env);
     let result = client.try_resolve_dispute(&unauthorized, &delivery_id);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 }
 
@@ -2933,8 +2933,8 @@ fn test_resolve_dispute_rejects_non_disputed_state() {
     let dispute_contract = dispute_of(&client);
     let result = client.try_resolve_dispute(&dispute_contract, &delivery_id);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState"),
     }
 }
 
@@ -2956,8 +2956,8 @@ fn test_assign_driver_rejects_unregistered_driver() {
 
     let result = client.try_assign_driver(&shipper, &delivery_id, &driver);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProviderNotFound.into()),
-        _ => panic!("Expected FaniLabError::ProviderNotFound"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProviderNotFound.into()),
+        _ => panic!("Expected TrustchainError::ProviderNotFound"),
     }
 }
 
@@ -2977,8 +2977,8 @@ fn test_assign_driver_rejects_suspended_driver() {
 
     let result = client.try_assign_driver(&shipper, &delivery_id, &driver);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 }
 

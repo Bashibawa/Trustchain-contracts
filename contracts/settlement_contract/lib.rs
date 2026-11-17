@@ -1,7 +1,7 @@
 #![no_std]
 
 use shared_types::{
-    DriverPreferenceUpdatedEvent, EscrowContractUpdatedEvent, FaniLabError,
+    DriverPreferenceUpdatedEvent, EscrowContractUpdatedEvent, TrustchainError,
     PendingPeerContractChange, StorageKey,
 };
 
@@ -42,7 +42,7 @@ impl SettlementContract {
     /// Initialize the settlement contract
     pub fn init(env: Env, admin: Address, escrow_contract: Address) {
         if env.storage().instance().has(&StorageKey::Admin) {
-            panic_with_error!(&env, FaniLabError::AlreadyInitialized);
+            panic_with_error!(&env, TrustchainError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&StorageKey::Admin, &admin);
@@ -60,7 +60,7 @@ impl SettlementContract {
         env.storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized))
     }
 
     /// Propose an escrow contract address. Admin only; it takes effect after
@@ -74,9 +74,9 @@ impl SettlementContract {
             .storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if admin != stored_admin {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         let activates_at = env
             .ledger()
@@ -105,9 +105,9 @@ impl SettlementContract {
             .storage()
             .instance()
             .get(&DataKey::PendingEscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NoPendingContractChange));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NoPendingContractChange));
         if env.ledger().timestamp() < pending.activates_at {
-            panic_with_error!(&env, FaniLabError::ContractChangeTimelockNotElapsed);
+            panic_with_error!(&env, TrustchainError::ContractChangeTimelockNotElapsed);
         }
         env.storage()
             .instance()
@@ -141,7 +141,7 @@ impl SettlementContract {
         env.storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized))
     }
 
     /// Set the trusted swap-router contract. Admin only.
@@ -151,7 +151,7 @@ impl SettlementContract {
     pub fn set_swap_router(env: Env, admin: Address, router: Address) {
         admin.require_auth();
         if !is_admin(&env, &admin) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         env.storage().instance().set(&DataKey::SwapRouter, &router);
         env.storage().instance().extend_ttl(
@@ -252,10 +252,10 @@ impl SettlementContract {
             .storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
 
         if caller != escrow_contract {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let now = env.ledger().timestamp();

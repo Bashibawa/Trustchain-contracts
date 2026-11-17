@@ -1,6 +1,6 @@
 # Trustchain-contracts 📦🔗
 
-> **FaniLab** est une plateforme de logistique et d'escrow alimentée par la blockchain, conçue pour connecter les personnes et entreprises ayant besoin de transporter des marchandises avec les fournisseurs de transport disponibles. Ce référentiel contient les contrats intelligents Stellar Soroban qui alimentent le système d'escrow blockchain utilisé par la plateforme logistique.
+> **Trustchain** est une plateforme de logistique et d'escrow alimentée par la blockchain, conçue pour connecter les personnes et entreprises ayant besoin de transporter des marchandises avec les fournisseurs de transport disponibles. Ce référentiel contient les contrats intelligents Stellar Soroban qui alimentent le système d'escrow blockchain utilisé par la plateforme logistique.
 
 ---
 
@@ -14,7 +14,7 @@
 
 ## 🌍 Vue d'ensemble
 
-Ce dépôt contient les contrats Soroban de FaniLab pour la gestion d'escrow, la livraison, les litiges, la réputation et la gouvernance. Il reflète la structure actuelle du workspace et est synchronisé sur le README anglais.
+Ce dépôt contient les contrats Soroban de Trustchain pour la gestion d'escrow, la livraison, les litiges, la réputation et la gouvernance. Il reflète la structure actuelle du workspace et est synchronisé sur le README anglais.
 
 Le projet est organisé en six contrats Rust et une bibliothèque partagée :
 - `escrow_contract`
@@ -222,12 +222,12 @@ Ce projet est autorisé sous la licence MIT - voir le fichier `LICENSE` pour les
 
 ## 📞 Contact & Communauté
 
-- **Site Web** : https://fanilab.com
-- **Email** : contact@fanilab.com
-- **Twitter** : [@FaniLabHQ](https://twitter.com/FaniLabHQ)
-- **Discord** : [Rejoignez notre communauté](https://discord.gg/fanilab)
-- **GitHub** : [Organisation FaniLab](https://github.com/fanilab)
+- **Site Web** : https://trustchain.com
+- **Email** : contact@trustchain.com
+- **Twitter** : [@TrustchainHQ](https://twitter.com/TrustchainHQ)
+- **Discord** : [Rejoignez notre communauté](https://discord.gg/trustchain)
+- **GitHub** : [Organisation Trustchain](https://github.com/trustchain)
 
 ---
 
-Construit avec ❤️ par l'équipe FaniLab | Alimenté par Stellar Soroban
+Construit avec ❤️ par l'équipe Trustchain | Alimenté par Stellar Soroban

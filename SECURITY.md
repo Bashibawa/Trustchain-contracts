@@ -19,7 +19,7 @@ GitHub's private vulnerability reporting is unavailable for this repository
 
 **Option 1 — Email (always available):**
 
-Send your report to **security@fanilabs.io**. This mailbox is monitored by the
+Send your report to **security@trustchain.io**. This mailbox is monitored by the
 maintainers and is the fallback channel when GitHub private reporting is not
 enabled. Encrypt sensitive reports with our PGP key if you have one; otherwise
 plain email is acceptable.
@@ -150,9 +150,9 @@ same thing:
 
 ## Security Contacts
 
-- **Email (private)**: security@fanilabs.io
+- **Email (private)**: security@trustchain.io
 - **Private vulnerability reporting**: [GitHub Security Advisories](https://github.com/suplex-deal/Trustchain-contracts/security/advisories/new) (when enabled)
-- **Discord**: FaniLab Official Server
+- **Discord**: Trustchain Official Server
 
 ## Additional Resources
 - [Security Audit Checklist](docs/SECURITY_AUDIT.md)

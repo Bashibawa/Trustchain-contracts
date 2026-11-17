@@ -41,7 +41,7 @@ export enum DeliveryErrorCode {
 
 /**
  * Contract-specific error codes raised by `delivery_contract::DeliveryError`.
- * Distinct from the shared `FaniLabError` codes in `common.types.ts`.
+ * Distinct from the shared `TrustchainError` codes in `common.types.ts`.
  */
 export const DeliveryErrorCodes = {
   InvalidMetadata: 2,

@@ -3,7 +3,7 @@
 use shared_types::{
     events, ttl, DeliveryId, DeliveryStatus, DisputeRaisedEvent, DisputeResolvedPayoutEvent,
     DisputeResolvedRefundEvent, DisputeResolvedSplitEvent, EscrowRecord, EscrowStatus,
-    FaniLabError, PendingPeerContractChange,
+    TrustchainError, PendingPeerContractChange,
 };
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, Address, BytesN, Env, IntoVal, Symbol,
@@ -80,14 +80,14 @@ fn require_escrow_not_paused(env: &Env) {
         .storage()
         .instance()
         .get(&DataKey::EscrowContract)
-        .unwrap_or_else(|| panic_with_error!(env, FaniLabError::NotInitialized));
+        .unwrap_or_else(|| panic_with_error!(env, TrustchainError::NotInitialized));
     let paused: bool = env.invoke_contract(
         &escrow_contract,
         &Symbol::new(env, "is_paused"),
         soroban_sdk::vec![env],
     );
     if paused {
-        panic_with_error!(env, FaniLabError::ProtocolPaused);
+        panic_with_error!(env, TrustchainError::ProtocolPaused);
     }
 }
 
@@ -211,14 +211,14 @@ impl DisputeResolutionContract {
             .storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(env, TrustchainError::NotInitialized));
         let escrow: EscrowRecord = env.invoke_contract(
             &escrow_addr,
             &Symbol::new(env, "get_escrow"),
             soroban_sdk::vec![env, u64::from(delivery_id).into_val(env)],
         );
         if escrow.status != EscrowStatus::Paused {
-            panic_with_error!(env, FaniLabError::InvalidState);
+            panic_with_error!(env, TrustchainError::InvalidState);
         }
         escrow
     }
@@ -283,15 +283,15 @@ impl DisputeResolutionContract {
         // delivery-contract pointer is merely a configuration field and must not
         // control whether the contract can be re-initialized.
         if env.storage().instance().has(&DataKey::AdminList) {
-            panic_with_error!(&env, FaniLabError::AlreadyInitialized);
+            panic_with_error!(&env, TrustchainError::AlreadyInitialized);
         }
         admin.require_auth();
         if !(MIN_DISPUTE_TIME_LIMIT..=MAX_DISPUTE_WINDOW).contains(&dispute_time_limit) {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         if !(MIN_DISPUTE_RESOLUTION_LIMIT..=MAX_DISPUTE_WINDOW).contains(&dispute_resolution_limit)
         {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         env.storage()
             .instance()
@@ -320,7 +320,7 @@ impl DisputeResolutionContract {
     pub fn add_admin(env: Env, caller: Address, new_admin: Address) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let mut admin_list: Vec<Address> = env
@@ -333,17 +333,17 @@ impl DisputeResolutionContract {
         // where loading it exceeds Soroban's deserialization budget. Checked
         // before any write so the whole call reverts cleanly.
         if admin_list.len() >= MAX_ADMINS {
-            panic_with_error!(&env, FaniLabError::LimitExceeded);
+            panic_with_error!(&env, TrustchainError::LimitExceeded);
         }
 
         if Self::is_admin(env.clone(), new_admin.clone()) {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         let key = DataKey::PendingAdminAdd(new_admin.clone());
         if let Some(proposer) = env.storage().instance().get::<_, Address>(&key) {
             if proposer == caller {
-                panic_with_error!(&env, FaniLabError::InvalidState);
+                panic_with_error!(&env, TrustchainError::InvalidState);
             }
             if !Self::is_admin(env.clone(), proposer) {
                 env.storage().instance().set(&key, &caller);
@@ -380,7 +380,7 @@ impl DisputeResolutionContract {
             .storage()
             .instance()
             .get::<_, Address>(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::InvalidState));
         let admin_list: Vec<Address> = env
             .storage()
             .instance()
@@ -396,7 +396,7 @@ impl DisputeResolutionContract {
             || Self::is_admin(env.clone(), new_admin.clone())
             || admin_list.len() >= MAX_ADMINS
         {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         let mut updated_admin_list = admin_list;
@@ -416,7 +416,7 @@ impl DisputeResolutionContract {
     pub fn remove_admin(env: Env, caller: Address, old_admin: Address) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let admin_list: Vec<Address> = env
@@ -437,19 +437,19 @@ impl DisputeResolutionContract {
         // unchanged list, drop a DataKey::Admin flag that was never set, and
         // publish an `admin_removed` event for a removal that never happened.
         if new_list.len() == admin_list.len() {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         // Removing the last admin would permanently brick governance — no one
         // would be left who could call add_admin to recover.
         if new_list.is_empty() {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         let key = DataKey::PendingAdminRemove(old_admin.clone());
         if let Some(proposer) = env.storage().instance().get::<_, Address>(&key) {
             if proposer == caller {
-                panic_with_error!(&env, FaniLabError::InvalidState);
+                panic_with_error!(&env, TrustchainError::InvalidState);
             }
             if !Self::is_admin(env.clone(), proposer) {
                 env.storage().instance().set(&key, &caller);
@@ -468,7 +468,7 @@ impl DisputeResolutionContract {
             }
 
             if new_list.is_empty() {
-                panic_with_error!(&env, FaniLabError::InvalidState);
+                panic_with_error!(&env, TrustchainError::InvalidState);
             }
 
             env.storage().instance().remove(&key);
@@ -506,14 +506,14 @@ impl DisputeResolutionContract {
         env.storage()
             .instance()
             .get(&DataKey::DeliveryContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized))
     }
 
     pub fn get_escrow_contract(env: Env) -> Address {
         env.storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized))
     }
 
     /// Propose a new delivery contract address. It takes effect after a
@@ -528,7 +528,7 @@ impl DisputeResolutionContract {
     pub fn set_delivery_contract(env: Env, caller: Address, delivery_contract: Address) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         let activates_at = env
             .ledger()
@@ -561,9 +561,9 @@ impl DisputeResolutionContract {
             .storage()
             .instance()
             .get(&DataKey::PendingDeliveryContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NoPendingContractChange));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NoPendingContractChange));
         if env.ledger().timestamp() < pending.activates_at {
-            panic_with_error!(&env, FaniLabError::ContractChangeTimelockNotElapsed);
+            panic_with_error!(&env, TrustchainError::ContractChangeTimelockNotElapsed);
         }
         env.storage()
             .instance()
@@ -592,7 +592,7 @@ impl DisputeResolutionContract {
     pub fn set_escrow_contract(env: Env, caller: Address, escrow_contract: Address) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         let activates_at = env
             .ledger()
@@ -632,7 +632,7 @@ impl DisputeResolutionContract {
     ) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         env.storage()
             .instance()
@@ -652,7 +652,7 @@ impl DisputeResolutionContract {
         env.storage()
             .instance()
             .get(&DataKey::IdentityReputationContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized))
     }
 
     pub fn get_dispute_time_limit(env: Env) -> u64 {
@@ -666,13 +666,13 @@ impl DisputeResolutionContract {
     pub fn set_dispute_reputation_penalty(env: Env, caller: Address, penalty: u32) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         // A penalty at or above the reputation ceiling would zero any driver's
         // score on a single ruling; bound it to a documented fraction of that
         // ceiling and reject anything larger loudly.
         if penalty > MAX_DISPUTE_REPUTATION_PENALTY {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         let old_penalty = Self::get_dispute_reputation_penalty(env.clone());
         env.storage()
@@ -703,10 +703,10 @@ impl DisputeResolutionContract {
     pub fn set_dispute_reputation_reward(env: Env, caller: Address, reward: u32) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         if reward > MAX_DISPUTE_REPUTATION_PENALTY {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         let old_reward = Self::get_dispute_reputation_reward(env.clone());
         env.storage()
@@ -736,10 +736,10 @@ impl DisputeResolutionContract {
     pub fn set_dispute_split_penalty(env: Env, caller: Address, penalty: u32) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         if penalty > MAX_DISPUTE_REPUTATION_PENALTY {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         let old_penalty = Self::get_dispute_split_penalty(env.clone());
         env.storage()
@@ -772,13 +772,13 @@ impl DisputeResolutionContract {
     pub fn set_dispute_resolution_limit(env: Env, caller: Address, new_limit: u64) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         // Same floor init enforces: never let the resolution window drop below
         // one day, or a dispute could be force-resolved out from under the
         // parties before they have any chance to reach a verdict.
         if !(MIN_DISPUTE_RESOLUTION_LIMIT..=MAX_DISPUTE_WINDOW).contains(&new_limit) {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         let old_limit = Self::get_dispute_resolution_limit(env.clone());
         env.storage()
@@ -796,13 +796,13 @@ impl DisputeResolutionContract {
     pub fn update_dispute_time_limit(env: Env, caller: Address, new_limit: u64) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         // The one-day floor is an invariant, not just a construction-time check:
         // enforce it here too, or an admin could set it to 0 and close the
         // post-delivery dispute window for every delivery in a single call.
         if !(MIN_DISPUTE_TIME_LIMIT..=MAX_DISPUTE_WINDOW).contains(&new_limit) {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         let old_limit = Self::get_dispute_time_limit(env.clone());
         env.storage()
@@ -830,7 +830,7 @@ impl DisputeResolutionContract {
             && caller != delivery.recipient
             && Some(caller.clone()) != delivery.driver
         {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         // Verify state and time limit
@@ -840,7 +840,7 @@ impl DisputeResolutionContract {
                 let current_time = env.ledger().timestamp();
                 let dispute_limit = Self::get_dispute_time_limit(env.clone());
                 if current_time > delivered_at.saturating_add(dispute_limit) {
-                    panic_with_error!(&env, FaniLabError::InvalidState);
+                    panic_with_error!(&env, TrustchainError::InvalidState);
                 }
                 // Call delivery contract to transition to Disputed. The
                 // delivery contract now pins its dispute caller to this
@@ -869,7 +869,7 @@ impl DisputeResolutionContract {
                 );
             }
             _ => {
-                panic_with_error!(&env, FaniLabError::InvalidState);
+                panic_with_error!(&env, TrustchainError::InvalidState);
             }
         }
 
@@ -886,7 +886,7 @@ impl DisputeResolutionContract {
 
         let dispute_key = DataKey::Dispute(delivery_id);
         if env.storage().persistent().has(&dispute_key) {
-            panic_with_error!(&env, FaniLabError::DuplicateDelivery);
+            panic_with_error!(&env, TrustchainError::DuplicateDelivery);
         }
 
         let dispute = DisputeCase {
@@ -939,10 +939,10 @@ impl DisputeResolutionContract {
             .storage()
             .persistent()
             .get(&dispute_key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         if dispute.status != DisputeStatus::Open {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         let delivery_contract_addr = Self::get_delivery_contract(env.clone());
@@ -956,7 +956,7 @@ impl DisputeResolutionContract {
             && caller != delivery.recipient
             && Some(caller.clone()) != delivery.driver
         {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         // Enforce the cap per submitting party, and reject a hash this party has
@@ -967,13 +967,13 @@ impl DisputeResolutionContract {
         for entry in dispute.evidence_hashes.iter() {
             if entry.submitter == caller {
                 if entry.hash == evidence_hash {
-                    panic_with_error!(&env, FaniLabError::InvalidState);
+                    panic_with_error!(&env, TrustchainError::InvalidState);
                 }
                 party_count += 1;
             }
         }
         if party_count >= MAX_EVIDENCE_HASHES_PER_PARTY {
-            panic_with_error!(&env, FaniLabError::LimitExceeded);
+            panic_with_error!(&env, TrustchainError::LimitExceeded);
         }
 
         dispute.evidence_hashes.push_back(EvidenceEntry {
@@ -998,7 +998,7 @@ impl DisputeResolutionContract {
         caller.require_auth();
         require_escrow_not_paused(&env);
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let dispute_key = DataKey::Dispute(delivery_id);
@@ -1006,10 +1006,10 @@ impl DisputeResolutionContract {
             .storage()
             .persistent()
             .get(&dispute_key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         if dispute.status != DisputeStatus::Open {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         // Issue #211: reject a non-Paused escrow before any state mutation or
@@ -1043,7 +1043,7 @@ impl DisputeResolutionContract {
         );
         let driver = delivery
             .driver
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::ProviderNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::ProviderNotFound));
 
         let penalty = Self::get_dispute_reputation_penalty(env.clone());
 
@@ -1111,7 +1111,7 @@ impl DisputeResolutionContract {
         caller.require_auth();
         require_escrow_not_paused(&env);
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let dispute_key = DataKey::Dispute(delivery_id);
@@ -1119,10 +1119,10 @@ impl DisputeResolutionContract {
             .storage()
             .persistent()
             .get(&dispute_key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         if dispute.status != DisputeStatus::Open {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         // Issue #473: validate sender_share_bps before any state mutation or
@@ -1140,7 +1140,7 @@ impl DisputeResolutionContract {
         // would still apply the split reputation penalty to the driver.
         // Callers must use the dedicated entry point for those outcomes.
         if sender_share_bps == 0 || sender_share_bps >= 10000 {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         // Issue #211: reject a non-Paused escrow before any state mutation or
@@ -1232,7 +1232,7 @@ impl DisputeResolutionContract {
         caller.require_auth();
         require_escrow_not_paused(&env);
         if !Self::is_admin(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let dispute_key = DataKey::Dispute(delivery_id);
@@ -1240,10 +1240,10 @@ impl DisputeResolutionContract {
             .storage()
             .persistent()
             .get(&dispute_key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         if dispute.status != DisputeStatus::Open {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         // Issue #211: reject a non-Paused escrow before any state mutation or
@@ -1350,11 +1350,11 @@ impl DisputeResolutionContract {
             .storage()
             .persistent()
             .get(&dispute_key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         // Check 1: Dispute must be Open
         if dispute.status != DisputeStatus::Open {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         // Check 2: Verify caller is a party to the delivery
@@ -1368,14 +1368,14 @@ impl DisputeResolutionContract {
             && caller != delivery.recipient
             && Some(caller.clone()) != delivery.driver
         {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         // Check 3: Verify the resolution window has elapsed
         let resolution_limit = Self::get_dispute_resolution_limit(env.clone());
         let current_time = env.ledger().timestamp();
         if current_time <= dispute.raised_at.saturating_add(resolution_limit) {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         // Check 4: Verify escrow is Paused (precondition before state mutation)
@@ -1386,7 +1386,7 @@ impl DisputeResolutionContract {
             soroban_sdk::vec![&env, u64::from(delivery_id).into_val(&env)],
         );
         if escrow.status != EscrowStatus::Paused {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         // All checks passed; now apply effects following checks-effects-interactions pattern
@@ -1525,7 +1525,7 @@ impl DisputeResolutionContract {
         env.storage()
             .persistent()
             .get(&dispute_key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound))
     }
 }
 

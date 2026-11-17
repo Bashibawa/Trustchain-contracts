@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `delivery_contract` manages the lifecycle of a logistics package on the FaniLab platform. It tracks delivery status, driver assignments, and metadata throughout the delivery journey — from creation through to proof of delivery.
+The `delivery_contract` manages the lifecycle of a logistics package on the Trustchain platform. It tracks delivery status, driver assignments, and metadata throughout the delivery journey — from creation through to proof of delivery.
 
 The delivery protocol is tightly coupled with the **escrow contract** for financial settlement and with the **identity & reputation contract** for driver verification.
 

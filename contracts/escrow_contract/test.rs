@@ -2,7 +2,7 @@ extern crate std;
 
 use super::*;
 use proptest::prelude::*;
-use shared_types::{DeliveryId, EscrowFundedEvent, EscrowReleasedEvent, FaniLabError};
+use shared_types::{DeliveryId, EscrowFundedEvent, EscrowReleasedEvent, TrustchainError};
 use soroban_sdk::{
     testutils::{storage::Persistent as _, Address as _, Deployer as _, Events, Ledger as _},
     token::{Client as TokenClient, StellarAssetClient},
@@ -444,8 +444,8 @@ fn test_create_escrow_duplicate_delivery_rejected() {
 
     let result = client.try_create_escrow(&sender, &recipient, &driver, &2u64, &token, &500, &None);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::DuplicateDelivery.into()),
-        _ => panic!("Expected FaniLabError::DuplicateDelivery"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::DuplicateDelivery.into()),
+        _ => panic!("Expected TrustchainError::DuplicateDelivery"),
     }
 }
 
@@ -519,8 +519,8 @@ fn test_release_escrow_unauthorized_rejected() {
 
     let result = client.try_release_escrow(&attacker, &4u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 }
 
@@ -621,8 +621,8 @@ fn test_sender_cannot_self_refund_disputed_escrow() {
 
     let result = client.try_refund_escrow(&sender, &910u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 
     // Funds must still be locked in the contract, untouched.
@@ -650,8 +650,8 @@ fn test_release_from_paused_state_rejected_with_invalid_state() {
 
     let result = client.try_release_escrow(&admin, &8u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState"),
     }
 }
 
@@ -675,8 +675,8 @@ fn test_refund_on_released_escrow_rejected_with_invalid_state() {
 
     let result = client.try_refund_escrow(&admin, &9u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState"),
     }
 }
 
@@ -710,8 +710,8 @@ fn test_insufficient_funds_guard_on_release() {
 
     let result = client.try_release_escrow(&admin, &10u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InsufficientFunds.into()),
-        _ => panic!("Expected FaniLabError::InsufficientFunds"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InsufficientFunds.into()),
+        _ => panic!("Expected TrustchainError::InsufficientFunds"),
     }
 }
 
@@ -779,8 +779,8 @@ fn test_resolve_dispute_refund_with_insufficient_funds() {
 
     let result = client.try_resolve_dispute(&admin, &11u64, &false);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InsufficientFunds.into()),
-        _ => panic!("Expected FaniLabError::InsufficientFunds"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InsufficientFunds.into()),
+        _ => panic!("Expected TrustchainError::InsufficientFunds"),
     }
 }
 
@@ -936,7 +936,7 @@ fn test_get_escrow_not_found() {
 
     let result = client.try_get_escrow(&999u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::DeliveryNotFound.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::DeliveryNotFound.into()),
         _ => panic!("Expected DeliveryNotFound"),
     }
 }
@@ -1196,8 +1196,8 @@ fn test_cannot_reclaim_non_expired_escrow() {
 
     let result = client.try_reclaim_expired_escrow(&202u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState"),
     }
 }
 
@@ -1224,8 +1224,8 @@ fn test_cannot_reclaim_released_escrow() {
 
     let result = client.try_reclaim_expired_escrow(&203u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState"),
     }
 }
 
@@ -1448,8 +1448,8 @@ fn test_sweep_untracked_balance_unauthorized_rejected() {
 
     let result = client.try_sweep_untracked_balance(&attacker, &token, &recovery_address);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 }
 
@@ -1464,8 +1464,8 @@ fn test_sweep_untracked_balance_rejects_contract_as_recipient() {
 
     let result = client.try_sweep_untracked_balance(&admin, &token, &contract_id);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for self-transfer"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for self-transfer"),
     }
 }
 
@@ -1576,8 +1576,8 @@ fn test_confirm_settlement_contract_before_timelock_rejected() {
 
     let result = client.try_confirm_settlement_contract(&admin);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::TimelockNotElapsed.into()),
-        _ => panic!("Expected FaniLabError::TimelockNotElapsed"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::TimelockNotElapsed.into()),
+        _ => panic!("Expected TrustchainError::TimelockNotElapsed"),
     }
 }
 
@@ -1597,8 +1597,8 @@ fn test_clear_settlement_contract_non_admin_rejected() {
 
     let result = client.try_clear_settlement_contract(&attacker);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 }
 
@@ -1666,8 +1666,8 @@ fn test_propose_admin_unauthorized_caller_typed_error() {
 
     let result = client.try_propose_admin(&attacker, &new_admin);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized (typed error), not raw panic"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized (typed error), not raw panic"),
     }
 }
 
@@ -1686,8 +1686,8 @@ fn test_accept_admin_no_pending_admin_typed_error() {
     let result = client.try_accept_admin(&caller);
     match result {
         Err(Ok(err)) => {
-            assert_ne!(err, FaniLabError::Unauthorized.into());
-            assert_eq!(err, FaniLabError::InvalidState.into());
+            assert_ne!(err, TrustchainError::Unauthorized.into());
+            assert_eq!(err, TrustchainError::InvalidState.into());
         }
         _ => panic!("Expected typed error for missing pending admin, not raw panic"),
     }
@@ -1709,8 +1709,8 @@ fn test_accept_admin_wrong_pending_caller_typed_error() {
 
     let result = client.try_accept_admin(&wrong_caller);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized (typed error), not raw panic"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized (typed error), not raw panic"),
     }
 }
 
@@ -1753,8 +1753,8 @@ fn test_propose_admin_emits_event_and_admin_can_cancel_proposal() {
     client.cancel_admin_proposal(&admin);
     assert_eq!(client.get_admin(), admin);
     match client.try_accept_admin(&new_admin) {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState after cancelling the proposal"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState after cancelling the proposal"),
     }
 
     let (topics, data) = last_event(&env);
@@ -1780,8 +1780,8 @@ fn test_cancel_admin_proposal_rejects_non_admin() {
     client.propose_admin(&admin, &new_admin);
 
     match client.try_cancel_admin_proposal(&attacker) {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized for non-admin cancellation"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized for non-admin cancellation"),
     }
 
     client.accept_admin(&new_admin);
@@ -1799,8 +1799,8 @@ fn test_cancel_admin_proposal_requires_pending_nomination() {
     client.init(&admin, &token, &0);
 
     match client.try_cancel_admin_proposal(&admin) {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState when no proposal is pending"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState when no proposal is pending"),
     }
 }
 
@@ -2925,8 +2925,8 @@ fn test_set_settlement_contract_unauthorized() {
 
     let result = client.try_set_settlement_contract(&attacker, &settlement_contract);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 }
 
@@ -3029,8 +3029,8 @@ fn test_double_release_prevented_by_state_check() {
 
     let result = client.try_release_escrow(&admin, &505u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState on double-release attempt"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState on double-release attempt"),
     }
 
     assert_eq!(balance(&env, &token, &driver), 2000);
@@ -3071,8 +3071,8 @@ fn test_cannot_release_already_refunded_escrow() {
 
     let result = client.try_release_escrow(&admin, &506u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState"),
     }
 
     assert_eq!(balance(&env, &token, &sender), 2000);
@@ -3094,8 +3094,8 @@ fn test_set_paused_requires_admin() {
 
     let result = client.try_set_paused(&not_admin, &true);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
     assert!(!client.is_paused());
 }
@@ -3171,8 +3171,8 @@ fn test_create_escrow_rejected_while_paused() {
     let result =
         client.try_create_escrow(&sender, &recipient, &driver, &900u64, &token, &1000, &None);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 }
 
@@ -3197,8 +3197,8 @@ fn test_create_escrows_batch_rejected_while_paused() {
 
     let result = client.try_create_escrows_batch(&sender, &recipient, &token, &escrow_list);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 }
 
@@ -3572,7 +3572,7 @@ fn test_batch_invalid_element_leaves_no_partial_state() {
     for delivery_id in [400u64, 401u64, 402u64] {
         let result = client.try_get_escrow(&delivery_id);
         match result {
-            Err(Ok(err)) => assert_eq!(err, FaniLabError::DeliveryNotFound.into()),
+            Err(Ok(err)) => assert_eq!(err, TrustchainError::DeliveryNotFound.into()),
             _ => panic!("Expected DeliveryNotFound for delivery {delivery_id}"),
         }
     }
@@ -3629,8 +3629,8 @@ fn test_mark_holdback_escrow_rejected_while_paused() {
 
     let result = client.try_mark_holdback_escrow(&recipient, &902u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 }
 
@@ -3641,8 +3641,8 @@ fn test_release_holdback_escrow_rejected_while_paused() {
 
     let result = client.try_release_holdback_escrow(&recipient, &903u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 }
 
@@ -3653,8 +3653,8 @@ fn test_release_escrow_rejected_while_paused() {
 
     let result = client.try_release_escrow(&recipient, &904u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 }
 
@@ -3665,8 +3665,8 @@ fn test_refund_escrow_rejected_while_paused() {
 
     let result = client.try_refund_escrow(&sender, &905u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 }
 
@@ -3677,8 +3677,8 @@ fn test_resolve_dispute_rejected_while_paused() {
 
     let result = client.try_resolve_dispute(&admin, &906u64, &true);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 }
 
@@ -3714,13 +3714,13 @@ fn test_configured_dispute_contract_blocks_direct_admin_resolution() {
 
     let result = client.try_resolve_dispute(&admin, &1940u64, &true);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected configured dispute contract to gate direct resolution"),
     }
 
     let split_result = client.try_resolve_dispute_split(&admin, &1940u64, &5000);
     match split_result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected configured dispute contract to gate direct split resolution"),
     }
 }
@@ -3732,8 +3732,8 @@ fn test_resolve_dispute_split_rejected_while_paused() {
 
     let result = client.try_resolve_dispute_split(&admin, &907u64, &5000u32);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 }
 
@@ -3749,8 +3749,8 @@ fn test_reclaim_expired_escrow_rejected_while_paused() {
 
     let result = client.try_reclaim_expired_escrow(&908u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 }
 
@@ -3807,8 +3807,8 @@ fn test_freeze_funds_unauthorized_caller_rejected() {
 
     let result = client.try_freeze_funds(&attacker, &910u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
     assert_eq!(client.get_escrow(&910u64).status, EscrowStatus::Locked);
 }
@@ -3999,8 +3999,8 @@ fn test_sender_cannot_refund_escrow_after_delivery_confirmed() {
     // The attack: the plain sender tries to reclaim the whole escrow.
     let result = escrow_client.try_refund_escrow(&sender, &delivery_id);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 
     // Nothing moved: the escrow is still Holdback and the funds are still
@@ -4044,8 +4044,8 @@ fn test_sender_cannot_refund_holdback_escrow() {
 
     let result = client.try_refund_escrow(&sender, &920u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 
     assert_eq!(client.get_escrow(&920u64).status, EscrowStatus::Holdback);
@@ -4068,8 +4068,8 @@ fn test_non_admin_callers_cannot_refund_holdback_escrow() {
     for caller in [recipient, driver, stranger] {
         let result = client.try_refund_escrow(&caller, &921u64);
         match result {
-            Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-            _ => panic!("Expected FaniLabError::Unauthorized"),
+            Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+            _ => panic!("Expected TrustchainError::Unauthorized"),
         }
     }
 
@@ -4146,8 +4146,8 @@ fn test_holdback_escrow_can_be_frozen_and_refunded_through_dispute() {
     // Even frozen, the sender still cannot self-refund (Issue #93 gate).
     let result = client.try_refund_escrow(&sender, &924u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 
     client.resolve_dispute(&admin, &924u64, &false);
@@ -4281,8 +4281,8 @@ fn test_resolve_dispute_release_with_insufficient_funds() {
 
     let result = client.try_resolve_dispute(&admin, &194u64, &true);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InsufficientFunds.into()),
-        _ => panic!("Expected FaniLabError::InsufficientFunds"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InsufficientFunds.into()),
+        _ => panic!("Expected TrustchainError::InsufficientFunds"),
     }
     // State must not have been mutated; escrow remains Paused.
     assert_eq!(client.get_escrow(&194u64).status, EscrowStatus::Paused);
@@ -4368,8 +4368,8 @@ fn test_raise_dispute_direct_user_call_is_unauthorized() {
     for party in [sender.clone(), recipient.clone(), driver.clone()] {
         let result = client.try_raise_dispute(&party, &445u64);
         match result {
-            Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-            _ => panic!("Expected FaniLabError::Unauthorized"),
+            Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+            _ => panic!("Expected TrustchainError::Unauthorized"),
         }
     }
 
@@ -4413,8 +4413,8 @@ fn test_raise_dispute_from_holdback_rejected_for_all_parties() {
 
         let result = client.try_raise_dispute(&caller, &delivery_id);
         match result {
-            Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-            _ => panic!("Expected FaniLabError::Unauthorized for a direct party call"),
+            Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+            _ => panic!("Expected TrustchainError::Unauthorized for a direct party call"),
         }
 
         // The escrow must be untouched: still in Holdback, still holding funds.
@@ -4472,8 +4472,8 @@ fn test_raise_dispute_rejects_terminal_states() {
     let dispute = new_dispute_contract(&env, &client, &admin);
     let result = client.try_raise_dispute(&dispute, &935u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for Released"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for Released"),
     }
 
     // Refunded state
@@ -4482,8 +4482,8 @@ fn test_raise_dispute_rejects_terminal_states() {
     client.refund_escrow(&sender, &936u64);
     let result = client.try_raise_dispute(&dispute, &936u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for Refunded"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for Refunded"),
     }
 
     // Split state
@@ -4493,8 +4493,8 @@ fn test_raise_dispute_rejects_terminal_states() {
     client.resolve_dispute_split(&admin, &937u64, &5000);
     let result = client.try_raise_dispute(&dispute, &937u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for Split"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for Split"),
     }
 }
 
@@ -4510,8 +4510,8 @@ fn test_raise_dispute_from_holdback_unauthorized_rejected() {
 
     let result = client.try_raise_dispute(&attacker, &938u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
     assert_eq!(client.get_escrow(&938u64).status, EscrowStatus::Holdback);
 }
@@ -4956,7 +4956,7 @@ fn test_resolve_dispute_split_accepts_dispute_resolution_contract_caller() {
 /// Test that resolve_dispute_split still requires admin authorization
 /// when dispute resolution contract is not set.
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #1)")] // FaniLabError::Unauthorized
+#[should_panic(expected = "HostError: Error(Contract, #1)")] // TrustchainError::Unauthorized
 fn test_resolve_dispute_split_requires_admin_when_no_dispute_contract() {
     let (env, contract_id) = setup_env();
     let client = EscrowContractClient::new(&env, &contract_id);
@@ -5061,8 +5061,8 @@ fn test_clear_fleet_management_contract_non_admin_rejected() {
 
     let result = client.try_clear_fleet_management_contract(&attacker);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized"),
     }
 
     // The configured address is untouched by the rejected call.
@@ -5597,7 +5597,7 @@ fn test_existing_instance_writers_still_extend_ttl() {
 // ── Issue #294: freeze_funds terminal-state regression tests ─────────────────
 //
 // Acceptance criteria (issue #294):
-//   • freeze_funds rejects Released, Refunded, Split with FaniLabError::InvalidState
+//   • freeze_funds rejects Released, Refunded, Split with TrustchainError::InvalidState
 //   • Already-Paused is a safe no-op (documented decision)
 //   • Freezing Locked / Holdback still works as before
 //
@@ -5605,7 +5605,7 @@ fn test_existing_instance_writers_still_extend_ttl() {
 // and test_freeze_funds_unauthorized_caller_rejected) are the originals and remain
 // unchanged above.
 
-/// freeze_funds on a Released escrow → typed FaniLabError::InvalidState.
+/// freeze_funds on a Released escrow → typed TrustchainError::InvalidState.
 /// Without the fix this would silently succeed (return ()) instead.
 #[test]
 fn test_freeze_funds_rejects_released_escrow() {
@@ -5630,14 +5630,14 @@ fn test_freeze_funds_rejects_released_escrow() {
 
     let result = client.try_freeze_funds(&dispute_contract, &2940u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for Released escrow"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for Released escrow"),
     }
     // State must not have changed
     assert_eq!(client.get_escrow(&2940u64).status, EscrowStatus::Released);
 }
 
-/// freeze_funds on a Refunded escrow → typed FaniLabError::InvalidState.
+/// freeze_funds on a Refunded escrow → typed TrustchainError::InvalidState.
 #[test]
 fn test_freeze_funds_rejects_refunded_escrow() {
     let (env, contract_id) = setup_env();
@@ -5661,13 +5661,13 @@ fn test_freeze_funds_rejects_refunded_escrow() {
 
     let result = client.try_freeze_funds(&dispute_contract, &2941u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for Refunded escrow"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for Refunded escrow"),
     }
     assert_eq!(client.get_escrow(&2941u64).status, EscrowStatus::Refunded);
 }
 
-/// freeze_funds on a Split escrow → typed FaniLabError::InvalidState.
+/// freeze_funds on a Split escrow → typed TrustchainError::InvalidState.
 #[test]
 fn test_freeze_funds_rejects_split_escrow() {
     let (env, contract_id) = setup_env();
@@ -5692,8 +5692,8 @@ fn test_freeze_funds_rejects_split_escrow() {
 
     let result = client.try_freeze_funds(&dispute_contract, &2942u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for Split escrow"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for Split escrow"),
     }
     assert_eq!(client.get_escrow(&2942u64).status, EscrowStatus::Split);
 }
@@ -6026,7 +6026,7 @@ fn test_create_escrow_unconfigured_path_unchanged() {
 }
 
 /// Only an admin may call `set_delivery_contract`; a non-admin caller must be
-/// rejected with FaniLabError::Unauthorized.
+/// rejected with TrustchainError::Unauthorized.
 #[test]
 fn test_set_delivery_contract_admin_only() {
     let (env, contract_id) = setup_env();
@@ -6042,8 +6042,8 @@ fn test_set_delivery_contract_admin_only() {
 
     let result = client.try_set_delivery_contract(&attacker, &fake_delivery);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized for non-admin caller"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized for non-admin caller"),
     }
     // Confirm nothing was stored
     assert_eq!(client.get_delivery_contract(), None);
@@ -6343,8 +6343,8 @@ fn test_batch_duplicate_delivery_id_rejected() {
 
     let result = client.try_create_escrows_batch(&sender, &recipient, &token, &escrow_list);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::DuplicateDelivery.into()),
-        _ => panic!("Expected FaniLabError::DuplicateDelivery for a batch with a duplicate ID"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::DuplicateDelivery.into()),
+        _ => panic!("Expected TrustchainError::DuplicateDelivery for a batch with a duplicate ID"),
     }
 }
 
@@ -6377,8 +6377,8 @@ fn test_batch_duplicate_delivery_id_across_batches_rejected() {
     second_batch.push_back((8001u64, driver.clone(), 1000i128, None)); // already exists
     let result = client.try_create_escrows_batch(&sender, &recipient, &token, &second_batch);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::DuplicateDelivery.into()),
-        _ => panic!("Expected FaniLabError::DuplicateDelivery for a cross-batch duplicate"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::DuplicateDelivery.into()),
+        _ => panic!("Expected TrustchainError::DuplicateDelivery for a cross-batch duplicate"),
     }
 }
 
@@ -6678,8 +6678,8 @@ fn test_set_holdback_window_rejects_below_minimum() {
     let result =
         client.try_set_holdback_window(&admin, &(constants::MIN_HOLDBACK_WINDOW_SECONDS - 1));
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for a below-minimum window"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for a below-minimum window"),
     }
 
     assert_eq!(
@@ -6701,13 +6701,13 @@ fn test_set_holdback_window_rejects_zero() {
 
     let result = client.try_set_holdback_window(&admin, &0u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for a zero window"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for a zero window"),
     }
 }
 
 /// Only the admin may reconfigure the window; a stranger is rejected with
-/// `FaniLabError::Unauthorized` (code 1).
+/// `TrustchainError::Unauthorized` (code 1).
 #[test]
 fn test_set_holdback_window_rejects_non_admin() {
     let (env, contract_id) = setup_env();
@@ -6721,8 +6721,8 @@ fn test_set_holdback_window_rejects_non_admin() {
 
     let result = client.try_set_holdback_window(&stranger, &(7 * 24 * 60 * 60));
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-        _ => panic!("Expected FaniLabError::Unauthorized for a non-admin caller"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected TrustchainError::Unauthorized for a non-admin caller"),
     }
 
     assert_eq!(
@@ -6741,8 +6741,8 @@ fn test_release_expired_holdback_rejected_before_timelock() {
 
     let result = client.try_release_expired_holdback(&9501u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::TimelockNotElapsed.into()),
-        _ => panic!("Expected FaniLabError::TimelockNotElapsed before the window elapsed"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::TimelockNotElapsed.into()),
+        _ => panic!("Expected TrustchainError::TimelockNotElapsed before the window elapsed"),
     }
 
     assert_eq!(
@@ -6851,8 +6851,8 @@ fn test_release_expired_holdback_rejects_non_holdback_escrow() {
 
     let result = client.try_release_expired_holdback(&9505u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for a Locked escrow"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for a Locked escrow"),
     }
 
     assert_eq!(client.get_escrow(&9505u64).status, EscrowStatus::Locked);
@@ -6888,8 +6888,8 @@ fn test_release_expired_holdback_rejected_while_paused() {
 
     let result = client.try_release_expired_holdback(&9507u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::ProtocolPaused.into()),
-        _ => panic!("Expected FaniLabError::ProtocolPaused"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProtocolPaused.into()),
+        _ => panic!("Expected TrustchainError::ProtocolPaused"),
     }
 
     assert_eq!(
@@ -6914,8 +6914,8 @@ fn test_release_expired_holdback_rejects_disputed_escrow() {
 
     let result = client.try_release_expired_holdback(&9508u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState for a Paused escrow"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for a Paused escrow"),
     }
 }
 
@@ -6944,15 +6944,15 @@ fn test_recipient_cannot_call_mark_holdback_escrow_directly() {
 
     // Calling mark_holdback_escrow directly as recipient must fail with Unauthorized
     let res = client.try_mark_holdback_escrow(&recipient, &10001u64);
-    assert_eq!(res.err(), Some(Ok(FaniLabError::Unauthorized.into())));
+    assert_eq!(res.err(), Some(Ok(TrustchainError::Unauthorized.into())));
 
     // Sender also cannot call it
     let res_sender = client.try_mark_holdback_escrow(&sender, &10001u64);
-    assert_eq!(res_sender.err(), Some(Ok(FaniLabError::Unauthorized.into())));
+    assert_eq!(res_sender.err(), Some(Ok(TrustchainError::Unauthorized.into())));
 
     // Admin also cannot call it (restricted to delivery_contract ONLY)
     let res_admin = client.try_mark_holdback_escrow(&admin, &10001u64);
-    assert_eq!(res_admin.err(), Some(Ok(FaniLabError::Unauthorized.into())));
+    assert_eq!(res_admin.err(), Some(Ok(TrustchainError::Unauthorized.into())));
 
     // Only delivery_contract succeeds
     let ok_res = client.try_mark_holdback_escrow(&delivery_contract, &10001u64);
@@ -6976,7 +6976,7 @@ fn test_mark_holdback_escrow_fails_when_delivery_contract_not_initialized() {
     client.create_escrow(&sender, &recipient, &driver, &10002u64, &token, &1000, &None);
 
     let res = client.try_mark_holdback_escrow(&recipient, &10002u64);
-    assert_eq!(res.err(), Some(Ok(FaniLabError::NotInitialized.into())));
+    assert_eq!(res.err(), Some(Ok(TrustchainError::NotInitialized.into())));
 }
 
 // ── Issue #460: SenderVolume TTL extension ────────────────────────────────
@@ -7332,8 +7332,8 @@ fn test_admin_freeze_funds_rejects_non_admin() {
     for impostor in [&sender, &recipient, &driver] {
         let result = client.try_admin_freeze_funds(impostor, &10403u64);
         match result {
-            Err(Ok(err)) => assert_eq!(err, FaniLabError::Unauthorized.into()),
-            _ => panic!("Expected FaniLabError::Unauthorized"),
+            Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+            _ => panic!("Expected TrustchainError::Unauthorized"),
         }
     }
 
@@ -7363,8 +7363,8 @@ fn test_admin_freeze_funds_rejects_terminal_state() {
 
     let result = client.try_admin_freeze_funds(&admin, &10404u64);
     match result {
-        Err(Ok(err)) => assert_eq!(err, FaniLabError::InvalidState.into()),
-        _ => panic!("Expected FaniLabError::InvalidState"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState"),
     }
 }
 

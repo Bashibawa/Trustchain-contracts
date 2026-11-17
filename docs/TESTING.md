@@ -4,7 +4,7 @@ Comprehensive testing guide for Trustchain-contracts.
 
 ## Overview
 
-FaniLab uses a multi-layered testing approach:
+Trustchain uses a multi-layered testing approach:
 1. **Unit Tests** - Test individual functions in isolation
 2. **Integration Tests** - Test contract interactions
 3. **Property-Based Tests** - Test invariants and edge cases

@@ -2,7 +2,7 @@
 
 use shared_types::{
     escrow_key, events, is_admin, ttl, DeliveryRecord, DeliveryStatus, EscrowRecord, EscrowStatus,
-    FaniLabError, PendingPeerContractChange, ProtocolConfig, StorageKey,
+    TrustchainError, PendingPeerContractChange, ProtocolConfig, StorageKey,
 };
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env,
@@ -50,9 +50,9 @@ fn require_admin(env: &Env, caller: &Address) {
         .storage()
         .instance()
         .get(&StorageKey::Admin)
-        .unwrap_or_else(|| panic_with_error!(env, FaniLabError::NotInitialized));
+        .unwrap_or_else(|| panic_with_error!(env, TrustchainError::NotInitialized));
     if *caller != stored_admin {
-        panic_with_error!(env, FaniLabError::Unauthorized);
+        panic_with_error!(env, TrustchainError::Unauthorized);
     }
 }
 
@@ -71,7 +71,7 @@ fn require_dispute_resolution_caller(env: &Env, caller: &Address, amount: i128) 
     caller.require_auth();
     require_admin(env, caller);
     if amount >= HIGH_VALUE_DISPUTE_THRESHOLD {
-        panic_with_error!(env, FaniLabError::Unauthorized);
+        panic_with_error!(env, TrustchainError::Unauthorized);
     }
 }
 
@@ -89,7 +89,7 @@ fn is_protocol_paused(env: &Env) -> bool {
 
 fn require_not_paused(env: &Env) {
     if is_protocol_paused(env) {
-        panic_with_error!(env, FaniLabError::ProtocolPaused);
+        panic_with_error!(env, TrustchainError::ProtocolPaused);
     }
 }
 
@@ -97,7 +97,7 @@ fn load_protocol_config(env: &Env) -> ProtocolConfig {
     env.storage()
         .instance()
         .get(&StorageKey::ProtocolConfig)
-        .unwrap_or_else(|| panic_with_error!(env, FaniLabError::NotInitialized))
+        .unwrap_or_else(|| panic_with_error!(env, TrustchainError::NotInitialized))
 }
 
 fn save_protocol_config(env: &Env, config: &ProtocolConfig) {
@@ -165,7 +165,7 @@ fn apply_freeze_funds(env: &Env, actor: &Address, delivery_id: u64) {
         // dispute contract with an unresolvable DisputeCase. Panic so
         // the calling transaction reverts cleanly.
         _ => {
-            panic_with_error!(env, FaniLabError::InvalidState);
+            panic_with_error!(env, TrustchainError::InvalidState);
         }
     }
 }
@@ -335,13 +335,13 @@ fn require_delivery_lifecycle_caller(env: &Env, caller: &Address, record: &Escro
         // Configured: only the delivery contract may drive this transition.
         Some(delivery_contract) => {
             if *caller != delivery_contract {
-                panic_with_error!(env, FaniLabError::Unauthorized);
+                panic_with_error!(env, TrustchainError::Unauthorized);
             }
         }
         // Not configured: preserve the pre-existing recipient path.
         None => {
             if *caller != record.recipient {
-                panic_with_error!(env, FaniLabError::Unauthorized);
+                panic_with_error!(env, TrustchainError::Unauthorized);
             }
         }
     }
@@ -483,7 +483,7 @@ fn settle_holdback_escrow(env: &Env, delivery_id: u64, mut record: EscrowRecord)
     let contract_balance =
         token::Client::new(env, &record.token).balance(&env.current_contract_address());
     if contract_balance < record.amount {
-        panic_with_error!(env, FaniLabError::InsufficientFunds);
+        panic_with_error!(env, TrustchainError::InsufficientFunds);
     }
 
     let base_fee_bps: u32 = env
@@ -549,7 +549,7 @@ fn load_escrow(env: &Env, delivery_id: u64) -> EscrowRecord {
         .storage()
         .persistent()
         .get(&key)
-        .unwrap_or_else(|| panic_with_error!(env, FaniLabError::DeliveryNotFound));
+        .unwrap_or_else(|| panic_with_error!(env, TrustchainError::DeliveryNotFound));
     env.storage().persistent().extend_ttl(
         &key,
         ttl::LEDGER_TTL_THRESHOLD,
@@ -696,7 +696,7 @@ impl EscrowContract {
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn init(env: Env, admin: Address, token: Address, platform_fee_bps: u32) {
         if env.storage().instance().has(&StorageKey::Admin) {
-            panic_with_error!(&env, FaniLabError::AlreadyInitialized);
+            panic_with_error!(&env, TrustchainError::AlreadyInitialized);
         }
         admin.require_auth();
         if platform_fee_bps > constants::MAX_PLATFORM_FEE_BPS {
@@ -733,9 +733,9 @@ impl EscrowContract {
             .storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if admin != stored_admin {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         admin.require_auth();
         if new_fee_bps > constants::MAX_PLATFORM_FEE_BPS {
@@ -764,7 +764,7 @@ impl EscrowContract {
         env.storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized))
     }
 
     pub fn get_token(env: Env) -> Address {
@@ -784,9 +784,9 @@ impl EscrowContract {
             .storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if admin != stored_admin {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         admin.require_auth();
         if new_slippage_bps > constants::MAX_SLIPPAGE_TOLERANCE_BPS {
@@ -861,7 +861,7 @@ impl EscrowContract {
             .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NoPendingSettlementChange));
 
         if env.ledger().timestamp() < pending.activates_at {
-            panic_with_error!(&env, FaniLabError::TimelockNotElapsed);
+            panic_with_error!(&env, TrustchainError::TimelockNotElapsed);
         }
 
         let old_address = get_settlement_contract(&env);
@@ -1062,9 +1062,9 @@ impl EscrowContract {
             .storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if stored_admin != current_admin {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         env.storage()
             .instance()
@@ -1081,15 +1081,15 @@ impl EscrowContract {
             .storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if stored_admin != current_admin {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         let pending_admin: Address = env
             .storage()
             .instance()
             .get(&DataKey::PendingAdmin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::InvalidState));
         env.storage().instance().remove(&DataKey::PendingAdmin);
         extend_instance_ttl(&env);
         env.events().publish(
@@ -1105,15 +1105,15 @@ impl EscrowContract {
             .storage()
             .instance()
             .get(&DataKey::PendingAdmin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::InvalidState));
         if pending != new_admin {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         let old_admin: Address = env
             .storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         env.storage().instance().set(&StorageKey::Admin, &new_admin);
         env.storage().instance().remove(&DataKey::PendingAdmin);
         extend_instance_ttl(&env);
@@ -1172,7 +1172,7 @@ impl EscrowContract {
             panic_with_error!(&env, EscrowError::InvalidAmount);
         }
         if env.storage().persistent().has(&escrow_key(delivery_id)) {
-            panic_with_error!(&env, FaniLabError::DuplicateDelivery);
+            panic_with_error!(&env, TrustchainError::DuplicateDelivery);
         }
         let config = load_protocol_config(&env);
         if token != config.token {
@@ -1358,7 +1358,7 @@ impl EscrowContract {
                     panic_with_error!(&env, EscrowError::InvalidAmount);
                 }
                 if env.storage().persistent().has(&escrow_key(delivery_id)) {
-                    panic_with_error!(&env, FaniLabError::DuplicateDelivery);
+                    panic_with_error!(&env, TrustchainError::DuplicateDelivery);
                 }
                 // Issue #295: same optional delivery-verification check as
                 // create_escrow — skipped when no delivery contract is configured.
@@ -1523,12 +1523,12 @@ impl EscrowContract {
         // removing direct recipient authorization to prevent stranding delivery
         // records in InTransit and denying driver reputation increases.
         let delivery_contract = get_delivery_contract(&env)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if caller != delivery_contract {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         if record.status != EscrowStatus::Locked {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         let timestamp = env.ledger().timestamp();
         record.status = EscrowStatus::Holdback;
@@ -1552,13 +1552,13 @@ impl EscrowContract {
         // and denying the driver their reputation.
         require_delivery_lifecycle_caller(&env, &caller, &record);
         if record.status != EscrowStatus::Locked {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         // Balance verification guard: confirm contract holds sufficient funds before transfer
         let contract_balance =
             token::Client::new(&env, &record.token).balance(&env.current_contract_address());
         if contract_balance < record.amount {
-            panic_with_error!(&env, FaniLabError::InsufficientFunds);
+            panic_with_error!(&env, TrustchainError::InsufficientFunds);
         }
 
         let base_fee_bps: u32 = env
@@ -1649,10 +1649,10 @@ impl EscrowContract {
         // recovery path; only the unilateral sender path is closed.
         if record.status == EscrowStatus::Paused || record.status == EscrowStatus::Holdback {
             if !admin_authorized {
-                panic_with_error!(&env, FaniLabError::Unauthorized);
+                panic_with_error!(&env, TrustchainError::Unauthorized);
             }
         } else if !admin_authorized && !sender_authorized {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         // Issue #372 (SECURITY): Block sender-initiated refund when the delivery
         // is already `InTransit`.
@@ -1685,7 +1685,7 @@ impl EscrowContract {
                     DeliveryStatus::InTransit
                     | DeliveryStatus::Delivered
                     | DeliveryStatus::Disputed => {
-                        panic_with_error!(&env, FaniLabError::Unauthorized);
+                        panic_with_error!(&env, TrustchainError::Unauthorized);
                     }
                     // Pending / Active / Cancelled — sender refund is still
                     // permissible; fall through to the rest of the function.
@@ -1697,13 +1697,13 @@ impl EscrowContract {
             && record.status != EscrowStatus::Paused
             && record.status != EscrowStatus::Holdback
         {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         // Balance verification guard: confirm contract holds sufficient funds before transfer
         let contract_balance =
             token::Client::new(&env, &record.token).balance(&env.current_contract_address());
         if contract_balance < record.amount {
-            panic_with_error!(&env, FaniLabError::InsufficientFunds);
+            panic_with_error!(&env, TrustchainError::InsufficientFunds);
         }
 
         // Issue #468: no reputation adjustment is performed here. Refunding a
@@ -1781,9 +1781,9 @@ impl EscrowContract {
             .storage()
             .instance()
             .get(&DataKey::DisputeResolutionContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if caller != dispute_contract {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         let mut record = load_escrow(&env, delivery_id);
         // Accept both Locked (pre-delivery dispute) and Holdback (post-delivery
@@ -1795,7 +1795,7 @@ impl EscrowContract {
         // establishes the precedent that the transition is sound.  Terminal
         // states (Released, Refunded, Split) are still rejected.
         if record.status != EscrowStatus::Locked && record.status != EscrowStatus::Holdback {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         let timestamp = env.ledger().timestamp();
         record.status = EscrowStatus::Paused;
@@ -1818,7 +1818,7 @@ impl EscrowContract {
         let mut record = load_escrow(&env, delivery_id);
         require_dispute_resolution_caller(&env, &caller, record.amount);
         if record.status != EscrowStatus::Paused {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         // Balance verification guard: confirm contract holds sufficient funds
@@ -1832,7 +1832,7 @@ impl EscrowContract {
         let contract_balance =
             token::Client::new(&env, &record.token).balance(&env.current_contract_address());
         if contract_balance < record.amount {
-            panic_with_error!(&env, FaniLabError::InsufficientFunds);
+            panic_with_error!(&env, TrustchainError::InsufficientFunds);
         }
 
         // Checks + effects (state) are resolved per-branch first; the actual
@@ -1932,12 +1932,12 @@ impl EscrowContract {
             panic_with_error!(&env, EscrowError::InvalidFee);
         }
         if record.status != EscrowStatus::Paused {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         let contract_balance =
             token::Client::new(&env, &record.token).balance(&env.current_contract_address());
         if contract_balance < record.amount {
-            panic_with_error!(&env, FaniLabError::InsufficientFunds);
+            panic_with_error!(&env, TrustchainError::InsufficientFunds);
         }
 
         let sender_amount = record.amount.saturating_mul(sender_share_bps as i128) / 10000;
@@ -2033,10 +2033,10 @@ impl EscrowContract {
         let admin_authorized = is_admin(&env, &caller);
         let recipient_authorized = caller == record.recipient;
         if !admin_authorized && !recipient_authorized {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         if record.status != EscrowStatus::Holdback {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         let driver = record.driver.clone();
         let (driver_amount, platform_fee) = settle_holdback_escrow(&env, delivery_id, record);
@@ -2065,17 +2065,17 @@ impl EscrowContract {
         require_not_paused(&env);
         let record = load_escrow(&env, delivery_id);
         if record.status != EscrowStatus::Holdback {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         // `mark_holdback_escrow` is the only path into `Holdback` and always
         // sets this, but fall back to a typed rejection rather than a panic
         // on unwrap if that invariant is ever violated.
         let holdback_started_at = record
             .holdback_started_at
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::InvalidState));
         let deadline = holdback_started_at.saturating_add(get_holdback_window(&env));
         if env.ledger().timestamp() < deadline {
-            panic_with_error!(&env, FaniLabError::TimelockNotElapsed);
+            panic_with_error!(&env, TrustchainError::TimelockNotElapsed);
         }
         let driver = record.driver.clone();
         let (driver_amount, platform_fee) = settle_holdback_escrow(&env, delivery_id, record);
@@ -2125,7 +2125,7 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(env, FaniLabError::DeliveryNotFound))
+            .unwrap_or_else(|| panic_with_error!(env, TrustchainError::DeliveryNotFound))
     }
 
     /// Dispute-contract entry point for freezing an escrow's funds.
@@ -2144,9 +2144,9 @@ impl EscrowContract {
             .storage()
             .instance()
             .get(&DataKey::DisputeResolutionContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if caller != dispute_contract {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         apply_freeze_funds(&env, &caller, delivery_id);
     }
@@ -2185,15 +2185,15 @@ impl EscrowContract {
         require_not_paused(&env);
         let mut record = load_escrow(&env, delivery_id);
         if record.status != EscrowStatus::Locked {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         if let Some(expires_at) = record.expires_at {
             let current_timestamp = env.ledger().timestamp();
             if current_timestamp <= expires_at {
-                panic_with_error!(&env, FaniLabError::InvalidState);
+                panic_with_error!(&env, TrustchainError::InvalidState);
             }
         } else {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         let contract_balance =
             token::Client::new(&env, &record.token).balance(&env.current_contract_address());
@@ -2206,7 +2206,7 @@ impl EscrowContract {
             .unwrap_or(0);
 
         if contract_balance < record.amount || current_total > contract_balance {
-            panic_with_error!(&env, FaniLabError::InsufficientFunds);
+            panic_with_error!(&env, TrustchainError::InsufficientFunds);
         }
         // Effects (state) are committed before the interaction (transfer)
         // below, per checks-effects-interactions.
@@ -2287,7 +2287,7 @@ impl EscrowContract {
         extend_instance_ttl(&env);
 
         if recipient == env.current_contract_address() {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         let contract_balance =

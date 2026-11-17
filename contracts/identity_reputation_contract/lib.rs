@@ -2,7 +2,7 @@
 
 use shared_types::{
     events, is_admin, ttl, DriverProfile, DriverRegisteredEvent, DriverReinstatedEvent,
-    DriverStatus, DriverSuspendedEvent, FaniLabError, KycStatusUpdatedEvent,
+    DriverStatus, DriverSuspendedEvent, TrustchainError, KycStatusUpdatedEvent,
     PendingPeerContractChange, ReputationAwardedEvent, ReputationDecreasedEvent,
     ReputationIncreasedEvent, StorageKey, UserProfile, UserRegisteredEvent,
 };
@@ -64,7 +64,7 @@ fn require_escrow_not_paused(env: &Env) {
         .storage()
         .instance()
         .get(&DataKey::DeliveryContract)
-        .unwrap_or_else(|| panic_with_error!(env, FaniLabError::NotInitialized));
+        .unwrap_or_else(|| panic_with_error!(env, TrustchainError::NotInitialized));
     let escrow_contract: Address = env.invoke_contract(
         &delivery_contract,
         &soroban_sdk::Symbol::new(env, "get_escrow_contract"),
@@ -76,7 +76,7 @@ fn require_escrow_not_paused(env: &Env) {
         soroban_sdk::vec![env],
     );
     if paused {
-        panic_with_error!(env, FaniLabError::ProtocolPaused);
+        panic_with_error!(env, TrustchainError::ProtocolPaused);
     }
 }
 
@@ -89,7 +89,7 @@ fn require_escrow_not_paused(env: &Env) {
 /// punishment.
 fn require_driver_not_suspended(env: &Env, profile: &DriverProfile) {
     if profile.status == DriverStatus::Suspended {
-        panic_with_error!(env, FaniLabError::InvalidState);
+        panic_with_error!(env, TrustchainError::InvalidState);
     }
 }
 
@@ -100,7 +100,7 @@ pub struct IdentityReputationContract;
 impl IdentityReputationContract {
     pub fn init(env: Env, admin: Address, delivery_contract: Address, dispute_contract: Address) {
         if env.storage().instance().has(&StorageKey::Admin) {
-            panic_with_error!(&env, FaniLabError::AlreadyInitialized);
+            panic_with_error!(&env, TrustchainError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&StorageKey::Admin, &admin);
@@ -128,7 +128,7 @@ impl IdentityReputationContract {
         env.storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized))
     }
 
     /// Grant or revoke a contract's ability to adjust driver reputation.
@@ -143,7 +143,7 @@ impl IdentityReputationContract {
     ) {
         admin.require_auth();
         if !is_admin(&env, &admin) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         let key = DataKey::AuthorizedContract(contract_addr.clone());
         if authorized {
@@ -166,7 +166,7 @@ impl IdentityReputationContract {
     pub fn set_reputation_config(env: Env, admin: Address, config: ReputationConfig) {
         admin.require_auth();
         if !is_admin(&env, &admin) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         // Upper-bound validation: each point field must not exceed MAX_REPUTATION.
@@ -177,13 +177,13 @@ impl IdentityReputationContract {
             || config.heavy_cargo_points > MAX_REPUTATION
             || config.fragile_points > MAX_REPUTATION
         {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         // Lower-bound validation: zero-point awards are no-ops and indicate a
         // misconfigured transaction rather than intentional policy.
         if config.base_points == 0 {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         env.storage()
@@ -208,7 +208,7 @@ impl IdentityReputationContract {
     pub fn set_delivery_contract(env: Env, admin: Address, delivery_contract: Address) {
         admin.require_auth();
         if !is_admin(&env, &admin) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         let activates_at = env
             .ledger()
@@ -238,9 +238,9 @@ impl IdentityReputationContract {
             .storage()
             .instance()
             .get(&DataKey::PendingDeliveryContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NoPendingContractChange));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NoPendingContractChange));
         if env.ledger().timestamp() < pending.activates_at {
-            panic_with_error!(&env, FaniLabError::ContractChangeTimelockNotElapsed);
+            panic_with_error!(&env, TrustchainError::ContractChangeTimelockNotElapsed);
         }
         env.storage()
             .instance()
@@ -268,7 +268,7 @@ impl IdentityReputationContract {
     pub fn set_dispute_contract(env: Env, admin: Address, dispute_contract: Address) {
         admin.require_auth();
         if !is_admin(&env, &admin) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         env.storage()
             .instance()
@@ -283,14 +283,14 @@ impl IdentityReputationContract {
         env.storage()
             .instance()
             .get(&DataKey::DeliveryContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized))
     }
 
     pub fn get_dispute_contract(env: Env) -> Address {
         env.storage()
             .instance()
             .get(&DataKey::DisputeContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized))
     }
 
     pub fn is_authorized_contract(env: Env, contract_addr: Address) -> bool {
@@ -392,7 +392,7 @@ impl IdentityReputationContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::ProviderNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::ProviderNotFound));
         profile
     }
 
@@ -407,7 +407,7 @@ impl IdentityReputationContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::ProviderNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::ProviderNotFound));
         profile
     }
 
@@ -419,7 +419,7 @@ impl IdentityReputationContract {
         // lifecycle, so it must stay administrable during an escrow pause.
 
         if !is_admin(&env, &admin) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let key = DataKey::DriverProfile(driver.clone());
@@ -427,7 +427,7 @@ impl IdentityReputationContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::ProviderNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::ProviderNotFound));
 
         profile.kyc_verified = kyc_verified;
 
@@ -466,7 +466,7 @@ impl IdentityReputationContract {
             require_escrow_not_paused(&env);
         }
         if !Self::is_authorized_contract(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         caller.require_auth();
 
@@ -475,7 +475,7 @@ impl IdentityReputationContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::ProviderNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::ProviderNotFound));
 
         require_driver_not_suspended(&env, &profile);
 
@@ -533,7 +533,7 @@ impl IdentityReputationContract {
             require_escrow_not_paused(&env);
         }
         if !Self::is_authorized_contract(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         caller.require_auth();
 
@@ -542,7 +542,7 @@ impl IdentityReputationContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::ProviderNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::ProviderNotFound));
 
         profile.reputation_score = reputation_down(profile.reputation_score, points);
 
@@ -577,7 +577,7 @@ impl IdentityReputationContract {
             require_escrow_not_paused(&env);
         }
         if !Self::is_authorized_contract(env.clone(), caller.clone()) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         caller.require_auth();
 
@@ -586,7 +586,7 @@ impl IdentityReputationContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::ProviderNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::ProviderNotFound));
 
         require_driver_not_suspended(&env, &profile);
 
@@ -644,7 +644,7 @@ impl IdentityReputationContract {
         if !is_admin(&env, &caller)
             && !Self::is_authorized_contract(env.clone(), caller.clone())
         {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let key = DataKey::DriverProfile(driver.clone());
@@ -652,10 +652,10 @@ impl IdentityReputationContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::ProviderNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::ProviderNotFound));
 
         if profile.status == DriverStatus::Suspended {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         profile.status = DriverStatus::Suspended;
@@ -685,7 +685,7 @@ impl IdentityReputationContract {
     pub fn reinstate_driver(env: Env, admin: Address, driver: Address) {
         admin.require_auth();
         if !is_admin(&env, &admin) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let key = DataKey::DriverProfile(driver.clone());
@@ -693,10 +693,10 @@ impl IdentityReputationContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::ProviderNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::ProviderNotFound));
 
         if profile.status != DriverStatus::Suspended {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         profile.status = DriverStatus::Active;

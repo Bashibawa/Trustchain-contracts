@@ -1,6 +1,6 @@
 #![no_std]
 
-use shared_types::FaniLabError;
+use shared_types::TrustchainError;
 use shared_types::{
     delivery_key, events, is_admin, ttl, DeliveryConfirmedEvent, DeliveryCreatedEvent,
     DeliveryDisputedEvent, DeliveryMetadata, DriverAssignedEvent, DriverProfile, StorageKey,
@@ -48,14 +48,14 @@ fn require_escrow_not_paused(env: &Env) {
         .storage()
         .instance()
         .get(&DataKey::EscrowContract)
-        .unwrap_or_else(|| panic_with_error!(env, FaniLabError::NotInitialized));
+        .unwrap_or_else(|| panic_with_error!(env, TrustchainError::NotInitialized));
     let paused: bool = env.invoke_contract(
         &escrow_contract,
         &Symbol::new(env, "is_paused"),
         soroban_sdk::vec![env],
     );
     if paused {
-        panic_with_error!(env, FaniLabError::ProtocolPaused);
+        panic_with_error!(env, TrustchainError::ProtocolPaused);
     }
 }
 
@@ -147,7 +147,7 @@ mod constants {
 ///   Cancelled → (terminal, no transitions)
 ///   Delivered → (terminal, no further transitions)
 ///   Resolved  → (terminal, no further transitions)
-pub fn validate_transition(from: DeliveryStatus, to: DeliveryStatus) -> Result<(), FaniLabError> {
+pub fn validate_transition(from: DeliveryStatus, to: DeliveryStatus) -> Result<(), TrustchainError> {
     let valid = matches!(
         (from, to),
         (DeliveryStatus::Pending, DeliveryStatus::Active)
@@ -165,7 +165,7 @@ pub fn validate_transition(from: DeliveryStatus, to: DeliveryStatus) -> Result<(
     if valid {
         Ok(())
     } else {
-        Err(FaniLabError::InvalidState)
+        Err(TrustchainError::InvalidState)
     }
 }
 
@@ -200,7 +200,7 @@ impl DeliveryContract {
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn init(env: Env, admin: Address, escrow_contract: Address) {
         if env.storage().instance().has(&StorageKey::Admin) {
-            panic_with_error!(&env, FaniLabError::AlreadyInitialized);
+            panic_with_error!(&env, TrustchainError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&StorageKey::Admin, &admin);
@@ -229,9 +229,9 @@ impl DeliveryContract {
             .storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if admin != stored_admin {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         env.storage()
             .instance()
@@ -259,7 +259,7 @@ impl DeliveryContract {
     pub fn set_dispute_resolution_contract(env: Env, admin: Address, dispute_contract: Address) {
         admin.require_auth();
         if !is_admin(&env, &admin) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         env.storage()
             .instance()
@@ -296,7 +296,7 @@ impl DeliveryContract {
     pub fn set_escrow_contract(env: Env, admin: Address, escrow_contract: Address) {
         admin.require_auth();
         if !is_admin(&env, &admin) {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         let activates_at = env
             .ledger()
@@ -380,9 +380,9 @@ impl DeliveryContract {
             .storage()
             .instance()
             .get(&StorageKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if admin != stored_admin {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         env.storage()
             .instance()
@@ -413,7 +413,7 @@ impl DeliveryContract {
         env.storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized))
     }
 
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
@@ -626,14 +626,14 @@ impl DeliveryContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         if delivery.sender != sender {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         if delivery.status != DeliveryStatus::Pending && delivery.status != DeliveryStatus::Active {
-            panic_with_error!(&env, FaniLabError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
 
         validate_delivery_metadata(&env, &metadata)
@@ -668,20 +668,20 @@ impl DeliveryContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         if delivery.sender != sender {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         validate_transition(delivery.status, DeliveryStatus::Cancelled)
-            .unwrap_or_else(|_| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|_| panic_with_error!(&env, TrustchainError::InvalidState));
 
         let escrow_address: Address = env
             .storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
 
         use soroban_sdk::IntoVal;
 
@@ -747,12 +747,12 @@ impl DeliveryContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         // Only admin or the delivery sender can assign a driver
         let is_sender = caller == delivery.sender;
         if !is_caller_admin && !is_sender {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         if driver == delivery.sender || driver == delivery.recipient {
@@ -770,7 +770,7 @@ impl DeliveryContract {
                 soroban_sdk::vec![&env, driver.clone().into_val(&env)],
             );
             if !has_profile {
-                panic_with_error!(&env, FaniLabError::ProviderNotFound);
+                panic_with_error!(&env, TrustchainError::ProviderNotFound);
             }
 
             let profile: DriverProfile = env.invoke_contract(
@@ -779,7 +779,7 @@ impl DeliveryContract {
                 soroban_sdk::vec![&env, driver.clone().into_val(&env)],
             );
             if profile.status == shared_types::DriverStatus::Suspended {
-                panic_with_error!(&env, FaniLabError::Unauthorized);
+                panic_with_error!(&env, TrustchainError::Unauthorized);
             }
 
             // Issue #314: when `require_kyc` is enabled, verify that `kyc_verified == true`.
@@ -789,12 +789,12 @@ impl DeliveryContract {
                 .get(&DataKey::RequireKyc)
                 .unwrap_or(false);
             if require_kyc && !profile.kyc_verified {
-                panic_with_error!(&env, FaniLabError::Unauthorized);
+                panic_with_error!(&env, TrustchainError::Unauthorized);
             }
         }
 
         validate_transition(delivery.status, DeliveryStatus::Active)
-            .unwrap_or_else(|_| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|_| panic_with_error!(&env, TrustchainError::InvalidState));
 
         delivery.driver = Some(driver.clone());
         delivery.status = DeliveryStatus::Active;
@@ -848,12 +848,12 @@ impl DeliveryContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         // Verify caller is the assigned driver for this delivery
         match &delivery.driver {
             Some(assigned) if *assigned == driver => {}
-            _ => panic_with_error!(&env, FaniLabError::Unauthorized),
+            _ => panic_with_error!(&env, TrustchainError::Unauthorized),
         }
 
         if let Some(identity_contract) = Self::get_identity_reputation_contract(env.clone()) {
@@ -863,12 +863,12 @@ impl DeliveryContract {
                 soroban_sdk::vec![&env, driver.into_val(&env)],
             );
             if is_suspended {
-                panic_with_error!(&env, FaniLabError::Unauthorized);
+                panic_with_error!(&env, TrustchainError::Unauthorized);
             }
         }
 
         validate_transition(delivery.status, DeliveryStatus::InTransit)
-            .unwrap_or_else(|_| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|_| panic_with_error!(&env, TrustchainError::InvalidState));
 
         // Issue #298: the escrow securing this delivery must exist and be
         // Locked before the driver commits to transit.
@@ -876,7 +876,7 @@ impl DeliveryContract {
             .storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         let escrow: shared_types::EscrowRecord = env.invoke_contract(
             &escrow_address,
             &Symbol::new(&env, "get_escrow"),
@@ -913,10 +913,10 @@ impl DeliveryContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         if recipient != delivery.recipient {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         if let Some(driver) = &delivery.driver {
@@ -926,13 +926,13 @@ impl DeliveryContract {
         }
 
         validate_transition(delivery.status, DeliveryStatus::Delivered)
-            .unwrap_or_else(|_| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|_| panic_with_error!(&env, TrustchainError::InvalidState));
 
         let escrow_address: Address = env
             .storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
 
         use soroban_sdk::IntoVal;
         let _: () = env.invoke_contract(
@@ -1009,9 +1009,9 @@ impl DeliveryContract {
             .storage()
             .instance()
             .get(&DataKey::DisputeResolutionContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if caller != dispute_contract {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let key = delivery_key(delivery_id);
@@ -1019,16 +1019,16 @@ impl DeliveryContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         validate_transition(delivery.status, DeliveryStatus::Disputed)
-            .unwrap_or_else(|_| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|_| panic_with_error!(&env, TrustchainError::InvalidState));
 
         let escrow_address: Address = env
             .storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
 
         // Cross-contract call first: if escrow raises dispute fails, delivery
         // state is not mutated (implicit rollback via propagated panic).
@@ -1079,9 +1079,9 @@ impl DeliveryContract {
             .storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if caller != escrow_contract {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let key = delivery_key(delivery_id);
@@ -1089,7 +1089,7 @@ impl DeliveryContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         match delivery.status {
             DeliveryStatus::Pending
@@ -1097,7 +1097,7 @@ impl DeliveryContract {
             | DeliveryStatus::InTransit
             | DeliveryStatus::Delivered => {}
             DeliveryStatus::Disputed => return,
-            _ => panic_with_error!(&env, FaniLabError::InvalidState),
+            _ => panic_with_error!(&env, TrustchainError::InvalidState),
         }
 
         let timestamp = env.ledger().timestamp();
@@ -1130,9 +1130,9 @@ impl DeliveryContract {
             .storage()
             .instance()
             .get(&DataKey::DisputeResolutionContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         if caller != dispute_contract {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
+            panic_with_error!(&env, TrustchainError::Unauthorized);
         }
 
         let key = delivery_key(delivery_id);
@@ -1140,10 +1140,10 @@ impl DeliveryContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         validate_transition(delivery.status, DeliveryStatus::Resolved)
-            .unwrap_or_else(|_| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|_| panic_with_error!(&env, TrustchainError::InvalidState));
 
         delivery.status = DeliveryStatus::Resolved;
 
@@ -1168,7 +1168,7 @@ impl DeliveryContract {
             .storage()
             .instance()
             .get(&DataKey::IdentityReputationContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
         env.invoke_contract(
             &identity_contract,
             &Symbol::new(&env, "get_driver_profile"),
@@ -1181,7 +1181,7 @@ impl DeliveryContract {
         env.storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound))
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound))
     }
 
     /// Returns combined delivery and escrow state, and flags known-invalid combinations.
@@ -1203,7 +1203,7 @@ impl DeliveryContract {
             .storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
 
         // Check whether the escrow record exists before fetching it. A delivery
         // in Pending state may not have a corresponding escrow yet — that is a
@@ -1336,11 +1336,11 @@ impl DeliveryContract {
             .storage()
             .persistent()
             .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::DeliveryNotFound));
 
         // ── 2. Validate delivery-side transition (before touching escrow) ──
         validate_transition(delivery.status, DeliveryStatus::Cancelled)
-            .unwrap_or_else(|_| panic_with_error!(&env, FaniLabError::InvalidState));
+            .unwrap_or_else(|_| panic_with_error!(&env, TrustchainError::InvalidState));
 
         // ── 3. Call escrow contract (interaction before local state write) ─
         //    `reclaim_expired_escrow` panics when the escrow is not Locked,
@@ -1350,7 +1350,7 @@ impl DeliveryContract {
             .storage()
             .instance()
             .get(&DataKey::EscrowContract)
-            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
 
         let _: () = env.invoke_contract(
             &escrow_address,

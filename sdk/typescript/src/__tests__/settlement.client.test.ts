@@ -95,7 +95,7 @@ describe('SettlementClient setDriverPreference', () => {
   it('propagates a reverted preference update to the caller', async () => {
     jest
       .spyOn(ContractInvoker.prototype, 'call')
-      .mockRejectedValue(new Error('Soroban simulation failed: FaniLabError::Unauthorized'));
+      .mockRejectedValue(new Error('Soroban simulation failed: TrustchainError::Unauthorized'));
 
     await expect(
       client().setDriverPreference({ admin: ADMIN, driver: DRIVER, preference: 0 }),
@@ -141,7 +141,7 @@ describe('SettlementClient executeSettlementSwap', () => {
   it('propagates a reverted swap to the caller', async () => {
     jest
       .spyOn(ContractInvoker.prototype, 'call')
-      .mockRejectedValue(new Error('Soroban simulation failed: FaniLabError::InsufficientBalance'));
+      .mockRejectedValue(new Error('Soroban simulation failed: TrustchainError::InsufficientBalance'));
 
     await expect(
       client().executeSettlementSwap({ admin: ADMIN, driver: DRIVER, token: TOKEN, amount: 1n }),

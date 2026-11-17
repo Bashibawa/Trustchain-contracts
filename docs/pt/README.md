@@ -1,6 +1,6 @@
 # Trustchain-contracts 📦🔗
 
-> **FaniLab** é uma Plataforma de Logística e Depósito em Caução com Blockchain, projetada para conectar indivíduos e empresas que precisam transportar mercadorias com provedores de transporte disponíveis. Este repositório contém os contratos inteligentes Stellar Soroban que alimentam o sistema de depósito em caução blockchain usado pela plataforma de logística.
+> **Trustchain** é uma Plataforma de Logística e Depósito em Caução com Blockchain, projetada para conectar indivíduos e empresas que precisam transportar mercadorias com provedores de transporte disponíveis. Este repositório contém os contratos inteligentes Stellar Soroban que alimentam o sistema de depósito em caução blockchain usado pela plataforma de logística.
 
 ---
 
@@ -14,7 +14,7 @@
 
 ## 🌍 Visão geral
 
-Este repositório contém os contratos Soroban do FaniLab para escrow, entrega, disputa, reputação e governança. Ele reflete a estrutura atual do workspace e segue a versão em inglês.
+Este repositório contém os contratos Soroban do Trustchain para escrow, entrega, disputa, reputação e governança. Ele reflete a estrutura atual do workspace e segue a versão em inglês.
 
 O projeto está organizado em seis contratos Rust e uma biblioteca compartilhada:
 - `escrow_contract`
@@ -222,12 +222,12 @@ Este projeto está licenciado sob a Licença MIT - consulte o arquivo `LICENSE` 
 
 ## 📞 Contato & Comunidade
 
-- **Website**: https://fanilab.com
-- **Email**: contact@fanilab.com
-- **Twitter**: [@FaniLabHQ](https://twitter.com/FaniLabHQ)
-- **Discord**: [Junte-se à nossa comunidade](https://discord.gg/fanilab)
-- **GitHub**: [Organização FaniLab](https://github.com/fanilab)
+- **Website**: https://trustchain.com
+- **Email**: contact@trustchain.com
+- **Twitter**: [@TrustchainHQ](https://twitter.com/TrustchainHQ)
+- **Discord**: [Junte-se à nossa comunidade](https://discord.gg/trustchain)
+- **GitHub**: [Organização Trustchain](https://github.com/trustchain)
 
 ---
 
-Construído com ❤️ pela Equipe FaniLab | Alimentado por Stellar Soroban
+Construído com ❤️ pela Equipe Trustchain | Alimentado por Stellar Soroban

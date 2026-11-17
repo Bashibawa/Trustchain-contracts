@@ -9,7 +9,7 @@ pub const HIGH_VALUE_DISPUTE_THRESHOLD: i128 = 1_000_000;
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
-pub enum FaniLabError {
+pub enum TrustchainError {
     /// Caller is not authorized to perform the requested action.
     Unauthorized = 1,
     /// Contract or protocol state has already been initialized.
@@ -936,7 +936,7 @@ mod test {
         delivery_key, escrow_key, events, CargoCategory, CargoDescriptor, DeliveryConfirmedEvent,
         DeliveryCreatedEvent, DeliveryDisputedEvent, DeliveryId, DeliveryMetadata, DeliveryRecord,
         DeliveryStatus, DriverAssignedEvent, DriverProfile, DriverStatus, EscrowFundedEvent,
-        EscrowRecord, EscrowRefundedEvent, EscrowReleasedEvent, EscrowState, FaniLabError,
+        EscrowRecord, EscrowRefundedEvent, EscrowReleasedEvent, EscrowState, TrustchainError,
         ProtocolConfig, StorageKey, UserProfile,
     };
     use soroban_sdk::{contract, testutils::Address as _, Address, Env, String, Symbol};
@@ -1040,47 +1040,47 @@ mod test {
 
     #[test]
     fn unauthorized_has_expected_discriminant() {
-        assert_eq!(FaniLabError::Unauthorized as u32, 1);
+        assert_eq!(TrustchainError::Unauthorized as u32, 1);
     }
 
     #[test]
     fn already_initialized_has_expected_discriminant() {
-        assert_eq!(FaniLabError::AlreadyInitialized as u32, 2);
+        assert_eq!(TrustchainError::AlreadyInitialized as u32, 2);
     }
 
     #[test]
     fn not_initialized_has_expected_discriminant() {
-        assert_eq!(FaniLabError::NotInitialized as u32, 3);
+        assert_eq!(TrustchainError::NotInitialized as u32, 3);
     }
 
     #[test]
     fn delivery_not_found_has_expected_discriminant() {
-        assert_eq!(FaniLabError::DeliveryNotFound as u32, 4);
+        assert_eq!(TrustchainError::DeliveryNotFound as u32, 4);
     }
 
     #[test]
     fn invalid_state_has_expected_discriminant() {
-        assert_eq!(FaniLabError::InvalidState as u32, 5);
+        assert_eq!(TrustchainError::InvalidState as u32, 5);
     }
 
     #[test]
     fn insufficient_funds_has_expected_discriminant() {
-        assert_eq!(FaniLabError::InsufficientFunds as u32, 6);
+        assert_eq!(TrustchainError::InsufficientFunds as u32, 6);
     }
 
     #[test]
     fn duplicate_delivery_has_expected_discriminant() {
-        assert_eq!(FaniLabError::DuplicateDelivery as u32, 8);
+        assert_eq!(TrustchainError::DuplicateDelivery as u32, 8);
     }
 
     #[test]
     fn provider_not_found_has_expected_discriminant() {
-        assert_eq!(FaniLabError::ProviderNotFound as u32, 9);
+        assert_eq!(TrustchainError::ProviderNotFound as u32, 9);
     }
 
     #[test]
     fn timelock_not_elapsed_has_expected_discriminant() {
-        assert_eq!(FaniLabError::TimelockNotElapsed as u32, 13);
+        assert_eq!(TrustchainError::TimelockNotElapsed as u32, 13);
     }
 
     #[test]

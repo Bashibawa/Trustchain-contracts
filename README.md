@@ -1,6 +1,6 @@
 # Trustchain-contracts 📦🔗
 
-> **FaniLab** is a Blockchain-Powered Logistics & Escrow Delivery Platform designed to connect individuals and businesses who need to transport goods with available transport providers. This repository contains the Stellar Soroban smart contracts powering the blockchain escrow system used by the logistics platform.
+> **Trustchain** is a Blockchain-Powered Logistics & Escrow Delivery Platform designed to connect individuals and businesses who need to transport goods with available transport providers. This repository contains the Stellar Soroban smart contracts powering the blockchain escrow system used by the logistics platform.
 
 ---
 
@@ -28,9 +28,9 @@
 
 ## 🌍 Project Overview
 
-FaniLab is composed of three main repositories:
-1. **FaniLab-Frontend**: Stack: Next.js + TypeScript + TailwindCSS
-2. **FaniLab-Backend**: Stack: Node.js + Express.js + TypeScript + MongoDB
+Trustchain is composed of three main repositories:
+1. **Trustchain-Frontend**: Stack: Next.js + TypeScript + TailwindCSS
+2. **Trustchain-Backend**: Stack: Node.js + Express.js + TypeScript + MongoDB
 3. **Trustchain-contracts** *(This Repository)*: Stack: Stellar Soroban + Rust
 
 The smart contract repository powers the **blockchain escrow system** used by the logistics platform.
@@ -45,18 +45,18 @@ Traditional logistics and delivery networks often suffer from:
 
 ## 💡 The Solution
 
-FaniLab creates a **shared decentralized logistics economy** by allowing existing transportation assets to participate securely in delivery operations. Transport providers include:
+Trustchain creates a **shared decentralized logistics economy** by allowing existing transportation assets to participate securely in delivery operations. Transport providers include:
 - Motorcycle delivery riders
 - Courier agents
 - Van drivers
 - Truck operators
 - Independent transport owners
 
-By leveraging **blockchain escrow smart contracts**, FaniLab protects both senders and delivery agents, ensuring goods are transported securely and payments are settled instantly upon delivery confirmation.
+By leveraging **blockchain escrow smart contracts**, Trustchain protects both senders and delivery agents, ensuring goods are transported securely and payments are settled instantly upon delivery confirmation.
 
 ## 🔄 How It Works (Escrow Payment Model)
 
-FaniLab ensures **trustless logistics transactions** through the following workflow:
+Trustchain ensures **trustless logistics transactions** through the following workflow:
 
 1. **Customer creates delivery request**: Sender initiates a delivery order.
 2. **Payment is locked in escrow**: The smart contract securely holds the payment.
@@ -87,7 +87,7 @@ Our primary target audience includes:
 
 ## 💰 Revenue Model
 
-FaniLab generates revenue through the following streams:
+Trustchain generates revenue through the following streams:
 - Escrow service fees
 - Delivery commission fees
 - Cross-border settlement fees
@@ -378,15 +378,15 @@ This project is licensed under the MIT License - see the `LICENSE` file for deta
 
 ## 📞 Contact & Community
 
-- **Website**: https://fanilab.com
-- **Email**: contact@fanilab.com
-- **Twitter**: [@FaniLabHQ](https://twitter.com/FaniLabHQ)
-- **Discord**: [Join our community](https://discord.gg/fanilab)
-- **GitHub**: [FaniLab Organization](https://github.com/fanilabs)
+- **Website**: https://trustchain.com
+- **Email**: contact@trustchain.com
+- **Twitter**: [@TrustchainHQ](https://twitter.com/TrustchainHQ)
+- **Discord**: [Join our community](https://discord.gg/trustchain)
+- **GitHub**: [Trustchain Organization](https://github.com/trustchain)
 
 ---
 
-Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
+Built with ❤️ by the Trustchain Team | Powered by Stellar Soroban
 
 ## Handsoff notes
 

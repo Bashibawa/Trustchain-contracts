@@ -10,7 +10,7 @@ const CONTRACTS_ROOT = path.resolve(__dirname, '../../../../contracts');
 
 /**
  * Issue #475 — the shared `ErrorCodes` map must include every variant of the
- * Rust `FaniLabError` enum.
+ * Rust `TrustchainError` enum.
  * Issue #476 — the SDK must expose the contract-specific error enums so
  * integrators need not hardcode raw integers.
  */
@@ -46,9 +46,9 @@ function rustVariants(file: string, enumName: string): Record<string, number> {
 }
 
 describe('SDK error code parity with the Rust enums', () => {
-  test('ErrorCodes mirrors every FaniLabError variant (Issue #475)', () => {
+  test('ErrorCodes mirrors every TrustchainError variant (Issue #475)', () => {
     expect({ ...ErrorCodes }).toEqual(
-      rustVariants('shared_types/lib.rs', 'FaniLabError')
+      rustVariants('shared_types/lib.rs', 'TrustchainError')
     );
   });
 

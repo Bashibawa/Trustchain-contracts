@@ -1,5 +1,5 @@
 /**
- * SDK preview example for the FaniLab TypeScript client layer.
+ * SDK preview example for the Trustchain TypeScript client layer.
  *
  * These client methods are intentionally non-functional in the current SDK
  * snapshot; they document the expected call shapes but are not yet wired to a
