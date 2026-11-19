@@ -96,6 +96,20 @@ export class FleetManagementClient {
     await this.invoker.call('accept_fleet_owner_reassignment', [address(newOwner), u64(fleetId)], options);
   }
 
+  /**
+   * Return the admin-proposed owner reassignment pending for `fleetId`, or
+   * `null` when none is pending. Lets the incoming owner inspect who proposed
+   * the change before calling `acceptFleetOwnerReassignment`.
+   * Exposes the on-chain `get_pending_fleet_owner_reassignment` query.
+   */
+  async getPendingFleetOwnerReassignment(
+    fleetId: bigint,
+    options?: ContractInvokeOptions,
+  ): Promise<FleetManagementTypes.PendingFleetOwnerReassignment | null> {
+    const value = await this.invoker.call('get_pending_fleet_owner_reassignment', [u64(fleetId)], options);
+    return value == null ? null : decodePendingFleetOwnerReassignment(value);
+  }
+
   async adminForceUpdateTreasury(params: FleetManagementTypes.AdminForceUpdateTreasuryParams, options?: ContractInvokeOptions): Promise<void> {
     await this.invoker.call('admin_force_update_treasury', [address(params.admin), u64(params.fleetId), address(params.newTreasury)], options);
   }
@@ -204,5 +218,14 @@ function decodePendingContractAddress(value: unknown, source: string): FleetMana
     address: String(requireField(record, 'address', source)),
     proposedBy: String(requireField(record, 'proposed_by', source)),
     activatesAt: BigInt(String(requireField(record, 'activates_at', source))),
+  };
+}
+
+function decodePendingFleetOwnerReassignment(value: unknown): FleetManagementTypes.PendingFleetOwnerReassignment {
+  const source = 'get_pending_fleet_owner_reassignment';
+  const record = asRecord(value, source);
+  return {
+    newOwner: String(requireField(record, 'new_owner', source)),
+    admin: String(requireField(record, 'admin', source)),
   };
 }

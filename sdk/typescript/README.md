@@ -150,6 +150,13 @@ const pendingEscrow = await fleetClient.getPendingEscrowContract();
 if (pendingEscrow) {
   console.log(pendingEscrow.address, pendingEscrow.proposedBy, pendingEscrow.activatesAt); // activatesAt: bigint (unix seconds)
 }
+
+// Owner reassignment proposed by adminReassignFleetOwner, awaiting the
+// incoming owner's acceptFleetOwnerReassignment
+const pendingOwner = await fleetClient.getPendingFleetOwnerReassignment(fleetId);
+if (pendingOwner) {
+  console.log(pendingOwner.newOwner, pendingOwner.admin);
+}
 ```
 
 ## Error Handling

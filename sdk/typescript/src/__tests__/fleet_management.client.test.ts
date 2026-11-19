@@ -341,3 +341,95 @@ describe('FleetManagementClient.getPendingEscrowContract', () => {
     await expect(client().getPendingEscrowContract()).rejects.toThrow('Soroban simulation failed');
   });
 });
+
+const NEW_OWNER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+
+/** Encode a Rust `PendingFleetOwnerReassignment` struct as the contract returns it. */
+function pendingOwnerScVal(newOwner: string, admin: string): xdr.ScVal {
+  return xdr.ScVal.scvMap([
+    new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol('admin'),
+      val: nativeToScVal(admin, { type: 'address' }),
+    }),
+    new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol('new_owner'),
+      val: nativeToScVal(newOwner, { type: 'address' }),
+    }),
+  ]);
+}
+
+describe('FleetManagementClient.getPendingFleetOwnerReassignment', () => {
+  it('calls get_pending_fleet_owner_reassignment with the fleet id and decodes the record', async () => {
+    const call = mockInvoker({
+      get_pending_fleet_owner_reassignment: [pendingOwnerScVal(NEW_OWNER, ADMIN)],
+    });
+
+    const result = await client().getPendingFleetOwnerReassignment(7n);
+
+    expect(result).toEqual({ newOwner: NEW_OWNER, admin: ADMIN });
+    expect(call).toHaveBeenCalledTimes(1);
+    const [fn, args] = call.mock.calls[0];
+    expect(fn).toBe('get_pending_fleet_owner_reassignment');
+    expect(args).toHaveLength(1);
+    expect(scValToNative(args[0] as xdr.ScVal)).toBe(7n);
+  });
+
+  it('encodes u64::MAX fleet ids without loss', async () => {
+    const call = mockInvoker({ get_pending_fleet_owner_reassignment: [nativeToScVal(null)] });
+    const maxId = 18_446_744_073_709_551_615n;
+
+    await client().getPendingFleetOwnerReassignment(maxId);
+
+    expect(scValToNative(call.mock.calls[0][1][0] as xdr.ScVal)).toBe(maxId);
+  });
+
+  it('returns null when no reassignment is pending (Option::None)', async () => {
+    mockInvoker({ get_pending_fleet_owner_reassignment: [nativeToScVal(null)] });
+
+    expect(await client().getPendingFleetOwnerReassignment(7n)).toBeNull();
+  });
+
+  it('returns null when the invoker resolves undefined', async () => {
+    jest.spyOn(ContractInvoker.prototype, 'call').mockResolvedValue(undefined as never);
+
+    expect(await client().getPendingFleetOwnerReassignment(7n)).toBeNull();
+  });
+
+  it('rejects a malformed record instead of returning partial state', async () => {
+    jest
+      .spyOn(ContractInvoker.prototype, 'call')
+      .mockResolvedValue({ admin: ADMIN } as never);
+
+    await expect(client().getPendingFleetOwnerReassignment(7n)).rejects.toThrow(
+      "get_pending_fleet_owner_reassignment: malformed record, missing field 'new_owner'",
+    );
+  });
+
+  it('rejects a non-struct value', async () => {
+    jest.spyOn(ContractInvoker.prototype, 'call').mockResolvedValue([NEW_OWNER, ADMIN] as never);
+
+    await expect(client().getPendingFleetOwnerReassignment(7n)).rejects.toThrow(
+      'get_pending_fleet_owner_reassignment: expected a struct record, received array',
+    );
+  });
+
+  it('propose → inspect → accept flow targets the expected entrypoints', async () => {
+    const call = mockInvoker({
+      admin_reassign_fleet_owner: [nativeToScVal(null)],
+      get_pending_fleet_owner_reassignment: [pendingOwnerScVal(NEW_OWNER, ADMIN)],
+      accept_fleet_owner_reassignment: [nativeToScVal(null)],
+    });
+
+    const fleetClient = client();
+    await fleetClient.adminReassignFleetOwner({ admin: ADMIN, fleetId: 7n, newOwner: NEW_OWNER });
+    const pending = await fleetClient.getPendingFleetOwnerReassignment(7n);
+    expect(pending?.newOwner).toBe(NEW_OWNER);
+    await fleetClient.acceptFleetOwnerReassignment(7n, pending!.newOwner);
+
+    expect(call.mock.calls.map((c) => c[0])).toEqual([
+      'admin_reassign_fleet_owner',
+      'get_pending_fleet_owner_reassignment',
+      'accept_fleet_owner_reassignment',
+    ]);
+  });
+});
