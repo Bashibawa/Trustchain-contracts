@@ -413,3 +413,6 @@ Built with ❤️ by the Trustchain Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-569 -->
 - #569: Dispute: Restrict Dispute Creation on Already Delivered Deliveries Beyond Allowed Window
+
+<!-- handsoff-issue-71 -->
+- #71: Reject invalid index kinds in escrow pagination
