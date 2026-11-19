@@ -422,3 +422,6 @@ Built with ❤️ by the Trustchain Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-73 -->
 - #73: Prevent archived escrow page gaps from silently shortening listings
+
+<!-- handsoff-issue-74 -->
+- #74: Validate delivery ID allocation against existing records
