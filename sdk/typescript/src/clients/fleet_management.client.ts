@@ -127,6 +127,17 @@ export class FleetManagementClient {
     return result == null ? null : (result as DriverFleetStatus);
   }
 
+  /**
+   * Return the ledger timestamp (seconds) after which the driver's pending
+   * invite can no longer be accepted, or `null` when the driver has no pending
+   * invite. Still returned once the window has elapsed; pair with
+   * `getDriverFleetStatus`, which reports `DriverFleetStatus.Expired` then.
+   */
+  async getInviteExpiry(fleetId: bigint, driver: string, options?: ContractInvokeOptions): Promise<bigint | null> {
+    const result = await this.invoker.call('get_invite_expiry', [u64(fleetId), address(driver)], options);
+    return result == null ? null : BigInt(String(result));
+  }
+
   async getFleetRoster(params: FleetManagementTypes.GetFleetRosterParams, options?: ContractInvokeOptions): Promise<string[]> {
     const offset = params.offset ?? 0;
     const limit = params.limit ?? DEFAULT_ROSTER_PAGE_SIZE;

@@ -2142,8 +2142,13 @@ pub enum DriverFleetStatus {
     Pending,  // Driver invited but has not yet accepted
     Active,   // Driver accepted and is an active fleet member
     Removed,  // Driver was removed from the fleet history
+    Expired,  // Invited, but the acceptance window elapsed (reported, never stored)
 }
 ```
+
+`Expired` is computed by `get_driver_fleet_status` for a `Pending` invite older
+than `INVITE_ACCEPTANCE_WINDOW_SECONDS` (7 days); `None` still means the driver
+was never invited.
 
 #### `FleetProfile`
 ```rust
@@ -2406,13 +2411,17 @@ Invite a driver to join a fleet.
 - `FleetNotFound` - No fleet with that ID exists
 - `FleetInactive` - The fleet has been deactivated
 - `Unauthorized` - Caller is not an authorized signer
-- `DriverAlreadyInvited` - A pending invite already exists for this driver
+- `DriverAlreadyInvited` - An unexpired pending invite already exists for this driver
 - `DriverAlreadyActive` - Driver is already an active member
 
 **Events:** `driver_invited`
 
 **State Changes:**
 - Stores `DriverFleetStatus::Pending` for `(fleet_id, driver)`
+- Stores `InviteExpiry(fleet_id, driver) = now + INVITE_ACCEPTANCE_WINDOW_SECONDS`
+- Extends both records to `LEDGER_TTL_EXTEND_TO` ledgers, which (by a compile-time assertion) outlives the acceptance window, so an invite cannot be archived while it is still acceptable
+
+**Notes:** A driver whose invite has expired (or was removed/cancelled) can be re-invited; re-inviting opens a fresh window.
 
 #### `cancel_invite`
 Cancel a driver's pending invite before it has been accepted.
@@ -2443,7 +2452,8 @@ Accept a pending fleet invite.
 **Errors:**
 - `FleetNotFound` - No fleet with that ID exists
 - `FleetInactive` - The fleet has been deactivated since the invite was issued
-- `InviteNotFound` - No pending invite exists for this driver
+- `InviteNotFound` - The driver was never invited, or the invite was cancelled/removed
+- `InviteExpired` - The driver was invited, but `INVITE_ACCEPTANCE_WINDOW_SECONDS` elapsed before acceptance; the fleet must re-invite
 - `DriverAlreadyActive` - Driver is already an active member
 - `RosterFull` - The fleet already holds `MAX_ROSTER_SIZE` active drivers
 - `DriverNotRegistered` - The accepting address has no `DriverProfile` in the
@@ -2481,13 +2491,22 @@ Remove a driver from a fleet. Either a signer on the fleet or the driver themsel
 - Compacts the roster index so it remains contiguous; the driver moved into the vacated slot has its membership record renewed together with the slot
 
 #### `get_driver_fleet_status`
-Return the fleet membership status of a driver, or `None` if no record exists.
+Return the fleet membership status of a driver, or `None` if the driver was never invited.
 
 **Parameters:**
 - `fleet_id: FleetId` - Fleet identifier
 - `driver: Address` - Driver address
 
-**Returns:** `Option<DriverFleetStatus>`
+**Returns:** `Option<DriverFleetStatus>` — `Some(Expired)` for a pending invite whose acceptance window has elapsed
+
+#### `get_invite_expiry`
+Return the ledger timestamp after which a pending invite can no longer be accepted.
+
+**Parameters:**
+- `fleet_id: FleetId` - Fleet identifier
+- `driver: Address` - Driver address
+
+**Returns:** `Option<u64>` — `None` when the driver has no pending invite (never invited, active, removed, or a legacy invite issued before acceptance windows, which never expires). Still returned after the window has elapsed.
 
 #### `get_fleet_roster`
 Return a page of the active roster of drivers for a fleet.

@@ -80,6 +80,7 @@ Shared failures such as `InvalidState`, `Unauthorized`, `DeliveryNotFound`, and
 | 12 | `InternalStorageError` | A roster read (`get_fleet_roster`, `renew_fleet_roster`) or roster compaction found a slot that should have existed but was absent. |
 | 13 | `DriverNotRegistered` | `accept_fleet_invite` was called by an address with no `DriverProfile` in the configured identity/reputation contract (Issue #451). |
 | 14 | `RosterFull` | The fleet already holds `MAX_ROSTER_SIZE` active drivers. |
+| 18 | `InviteExpired` | `accept_fleet_invite` was called after the invite's `INVITE_ACCEPTANCE_WINDOW_SECONDS` elapsed. Distinct from `InviteNotFound` (never invited). |
 
 Shared failures such as `AlreadyInitialized`, `NotInitialized`, `Unauthorized`, and
 `TimelockNotElapsed` use `TrustchainError`.

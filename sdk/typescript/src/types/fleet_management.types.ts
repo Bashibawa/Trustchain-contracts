@@ -16,7 +16,14 @@ export const FleetErrorCodes = {
   InternalStorageError: 12,
   DriverNotRegistered: 13,
   RosterFull: 14,
+  InviteExpired: 18,
 } as const;
+
+/**
+ * Seconds a driver has to accept a fleet invitation, mirroring
+ * `INVITE_ACCEPTANCE_WINDOW_SECONDS` in fleet_management_contract.
+ */
+export const INVITE_ACCEPTANCE_WINDOW_SECONDS = 7 * 24 * 60 * 60;
 
 export interface RegisterFleetParams {
   owner: string;

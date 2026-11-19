@@ -2515,3 +2515,166 @@ fn test_missing_roster_slot_is_reported_not_silently_skipped() {
     let renew = client.try_renew_fleet_roster(&fleet_id, &0, &10);
     assert_eq!(renew, Err(Ok(FleetError::InternalStorageError.into())));
 }
+
+// ── Invite acceptance window ─────────────────────────────────────────────────
+
+fn invite_driver(env: &Env, client: &FleetManagementContractClient) -> (u64, Address, Address) {
+    let (fleet_id, owner, _treasury) = register_fleet(env, client);
+    let driver = Address::generate(env);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(env));
+    (fleet_id, owner, driver)
+}
+
+fn advance_seconds(env: &Env, seconds: u64) {
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + seconds);
+}
+
+#[test]
+fn test_invite_records_expiry_and_outlives_window_in_storage() {
+    let (env, client, _admin) = setup_test();
+    let issued_at = env.ledger().timestamp();
+    let (fleet_id, _owner, driver) = invite_driver(&env, &client);
+
+    assert_eq!(
+        client.get_invite_expiry(&fleet_id, &driver),
+        Some(issued_at + INVITE_ACCEPTANCE_WINDOW_SECONDS)
+    );
+    // Both invite records carry the full extension, which is longer than the
+    // acceptance window, so the invite cannot be archived while acceptable.
+    assert_eq!(
+        membership_ttl(&env, &client, fleet_id, &driver),
+        ttl::LEDGER_TTL_EXTEND_TO
+    );
+    let expiry_ttl = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&DataKey::InviteExpiry(fleet_id, driver.clone()))
+    });
+    assert_eq!(expiry_ttl, ttl::LEDGER_TTL_EXTEND_TO);
+}
+
+#[test]
+fn test_invite_accepted_on_last_second_of_window() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, _owner, driver) = invite_driver(&env, &client);
+    advance_seconds(&env, INVITE_ACCEPTANCE_WINDOW_SECONDS);
+
+    assert_eq!(
+        client.get_driver_fleet_status(&fleet_id, &driver),
+        Some(DriverFleetStatus::Pending)
+    );
+    client.accept_fleet_invite(&fleet_id, &driver);
+
+    assert_eq!(
+        client.get_driver_fleet_status(&fleet_id, &driver),
+        Some(DriverFleetStatus::Active)
+    );
+    // The window no longer applies to an active member.
+    assert_eq!(client.get_invite_expiry(&fleet_id, &driver), None);
+    let expiry_present = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .has(&DataKey::InviteExpiry(fleet_id, driver.clone()))
+    });
+    assert!(!expiry_present);
+}
+
+#[test]
+fn test_expired_invite_is_reported_distinctly_from_never_invited() {
+    let (env, client, _admin) = setup_test();
+    let issued_at = env.ledger().timestamp();
+    let (fleet_id, _owner, driver) = invite_driver(&env, &client);
+    let stranger = Address::generate(&env);
+    advance_seconds(&env, INVITE_ACCEPTANCE_WINDOW_SECONDS + 1);
+
+    assert_eq!(
+        client.get_driver_fleet_status(&fleet_id, &driver),
+        Some(DriverFleetStatus::Expired)
+    );
+    assert_eq!(client.get_driver_fleet_status(&fleet_id, &stranger), None);
+    // The expiry stays queryable after the window closes.
+    assert_eq!(
+        client.get_invite_expiry(&fleet_id, &driver),
+        Some(issued_at + INVITE_ACCEPTANCE_WINDOW_SECONDS)
+    );
+    assert_eq!(client.get_invite_expiry(&fleet_id, &stranger), None);
+
+    assert_eq!(
+        client.try_accept_fleet_invite(&fleet_id, &driver),
+        Err(Ok(FleetError::InviteExpired.into()))
+    );
+    assert_eq!(
+        client.try_accept_fleet_invite(&fleet_id, &stranger),
+        Err(Ok(FleetError::InviteNotFound.into()))
+    );
+    // A rejected acceptance must not touch the roster.
+    assert_eq!(client.get_fleet(&fleet_id).total_active_drivers, 0);
+    assert_eq!(client.get_payout_address(&driver, &fleet_id), driver);
+}
+
+#[test]
+fn test_expired_invite_can_be_reissued_and_accepted() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, owner, driver) = invite_driver(&env, &client);
+
+    // An unexpired invite still blocks a duplicate.
+    assert_eq!(
+        client.try_add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env)),
+        Err(Ok(FleetError::DriverAlreadyInvited.into()))
+    );
+
+    advance_seconds(&env, INVITE_ACCEPTANCE_WINDOW_SECONDS + 1);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
+
+    // Re-inviting opens a fresh window.
+    assert_eq!(
+        client.get_driver_fleet_status(&fleet_id, &driver),
+        Some(DriverFleetStatus::Pending)
+    );
+    assert_eq!(
+        client.get_invite_expiry(&fleet_id, &driver),
+        Some(env.ledger().timestamp() + INVITE_ACCEPTANCE_WINDOW_SECONDS)
+    );
+    client.accept_fleet_invite(&fleet_id, &driver);
+    assert_eq!(client.get_fleet(&fleet_id).total_active_drivers, 1);
+}
+
+#[test]
+fn test_cancelling_expired_invite_clears_expiry() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, owner, driver) = invite_driver(&env, &client);
+    advance_seconds(&env, INVITE_ACCEPTANCE_WINDOW_SECONDS + 1);
+
+    client.cancel_invite(&owner, &fleet_id, &driver, &no_co_signers(&env));
+
+    assert_eq!(
+        client.get_driver_fleet_status(&fleet_id, &driver),
+        Some(DriverFleetStatus::Removed)
+    );
+    assert_eq!(client.get_invite_expiry(&fleet_id, &driver), None);
+}
+
+#[test]
+fn test_legacy_pending_invite_without_expiry_never_expires() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, _owner, driver) = invite_driver(&env, &client);
+    // Simulate an invite issued before acceptance windows existed.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::InviteExpiry(fleet_id, driver.clone()));
+    });
+    advance_seconds(&env, INVITE_ACCEPTANCE_WINDOW_SECONDS * 10);
+
+    assert_eq!(
+        client.get_driver_fleet_status(&fleet_id, &driver),
+        Some(DriverFleetStatus::Pending)
+    );
+    assert_eq!(client.get_invite_expiry(&fleet_id, &driver), None);
+    client.accept_fleet_invite(&fleet_id, &driver);
+    assert_eq!(
+        client.get_driver_fleet_status(&fleet_id, &driver),
+        Some(DriverFleetStatus::Active)
+    );
+}

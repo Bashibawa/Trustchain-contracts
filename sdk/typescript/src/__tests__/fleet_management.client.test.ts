@@ -285,3 +285,26 @@ describe('FleetManagementClient.renewFleetRoster', () => {
     expect(scValToNative(args[2])).toBe(100);
   });
 });
+
+describe('FleetManagementClient invite expiry', () => {
+  const DRIVER = 'GAEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSH7S';
+
+  it('getInviteExpiry calls get_invite_expiry and returns the timestamp', async () => {
+    const call = mockInvoker({
+      get_invite_expiry: [nativeToScVal(1_700_604_800n, { type: 'u64' })],
+    });
+
+    const expiry = await client().getInviteExpiry(4n, DRIVER);
+
+    expect(expiry).toBe(1_700_604_800n);
+    const [fn, args] = call.mock.calls[0];
+    expect(fn).toBe('get_invite_expiry');
+    expect(scValToNative(args[0])).toBe(4n);
+    expect(decodeAddress(args[1])).toBe(DRIVER);
+  });
+
+  it('getInviteExpiry returns null when there is no pending invite', async () => {
+    mockInvoker({ get_invite_expiry: [nativeToScVal(null)] });
+    expect(await client().getInviteExpiry(4n, DRIVER)).toBeNull();
+  });
+});

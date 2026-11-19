@@ -38,6 +38,18 @@ pub const MAX_SIGNERS_PER_FLEET: u32 = 20;
 pub const TREASURY_CHANGE_TIMELOCK_SECONDS: u64 = 3 * 24 * 60 * 60; // 3 days
 pub const PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS: u64 = 3 * 24 * 60 * 60; // 3 days
 
+/// How long a driver has to accept a fleet invitation, measured from the
+/// ledger timestamp at which `add_driver_to_fleet` issued it. Once elapsed,
+/// `accept_fleet_invite` fails with `FleetError::InviteExpired` and
+/// `get_driver_fleet_status` reports `DriverFleetStatus::Expired`.
+pub const INVITE_ACCEPTANCE_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60; // 7 days
+
+// The invite records are extended to `LEDGER_TTL_EXTEND_TO` ledgers when
+// issued. Even assuming an (unrealistically fast) one-second ledger close
+// time, that outlives the acceptance window, so an invite can never be
+// archived while it is still acceptable.
+const _: () = assert!(INVITE_ACCEPTANCE_WINDOW_SECONDS < ttl::LEDGER_TTL_EXTEND_TO as u64);
+
 /// Renew the TTL of contract-wide state that every fleet operation depends on:
 /// the contract instance and the persistent `DataKey::FleetCounter`.
 ///
@@ -96,6 +108,36 @@ fn renew_active_membership(env: &Env, fleet_id: u64, driver: &Address, index: u3
         ttl::LEDGER_TTL_THRESHOLD,
         ttl::LEDGER_TTL_EXTEND_TO,
     );
+}
+
+/// Extend the TTL of a pending invite's status and expiry records together.
+fn renew_pending_invite(env: &Env, fleet_id: u64, driver: &Address) {
+    for key in [
+        DataKey::DriverFleet(fleet_id, driver.clone()),
+        DataKey::InviteExpiry(fleet_id, driver.clone()),
+    ] {
+        env.storage().persistent().extend_ttl(
+            &key,
+            ttl::LEDGER_TTL_THRESHOLD,
+            ttl::LEDGER_TTL_EXTEND_TO,
+        );
+    }
+}
+
+/// Whether a `Pending` invite's acceptance window has elapsed. Invites issued
+/// before acceptance windows existed have no expiry record and never expire.
+fn invite_window_elapsed(env: &Env, fleet_id: u64, driver: &Address) -> bool {
+    env.storage()
+        .persistent()
+        .get::<_, u64>(&DataKey::InviteExpiry(fleet_id, driver.clone()))
+        .is_some_and(|expires_at| env.ledger().timestamp() > expires_at)
+}
+
+/// Drop the expiry record once an invite leaves the `Pending` state.
+fn clear_invite_expiry(env: &Env, fleet_id: u64, driver: &Address) {
+    env.storage()
+        .persistent()
+        .remove(&DataKey::InviteExpiry(fleet_id, driver.clone()));
 }
 
 fn require_escrow_not_paused(env: &Env) {
@@ -217,6 +259,10 @@ pub enum FleetError {
     NoPendingContractChange = 15,
     ContractChangeTimelockNotElapsed = 16,
     NoPendingOwnerReassignment = 17,
+    /// The driver was invited, but the invitation's acceptance window
+    /// (`INVITE_ACCEPTANCE_WINDOW_SECONDS`) elapsed before it was accepted.
+    /// Distinct from `InviteNotFound`, which means there is no invite.
+    InviteExpired = 18,
 }
 
 #[contracttype]
@@ -228,6 +274,12 @@ pub enum DriverFleetStatus {
     Active,
     /// Driver has been removed from the fleet (terminal state, historical record preserved).
     Removed,
+    /// Driver was invited but did not accept within
+    /// `INVITE_ACCEPTANCE_WINDOW_SECONDS`. Never stored: reported by
+    /// `get_driver_fleet_status` for a `Pending` invite whose window elapsed,
+    /// so clients can tell an expired invitation apart from no invitation
+    /// (`None`). The fleet may re-invite the driver.
+    Expired,
 }
 
 #[contracttype]
@@ -282,6 +334,9 @@ pub enum DataKey {
     PendingIdentityContract,
     /// Instance key — pending escrow contract address awaiting confirmation.
     PendingEscrowContract,
+    /// Persistent key — ledger timestamp after which a `Pending` invite can
+    /// no longer be accepted. Present only while the invite is pending.
+    InviteExpiry(u64, Address),
 }
 
 #[contracttype]
@@ -977,32 +1032,41 @@ impl FleetManagementContract {
 
         let invite_key = DataKey::DriverFleet(fleet_id, driver.clone());
 
-        // Guard: do not overwrite an existing invite or active membership.
-        // Removed drivers may be re-invited.
+        // Guard: do not overwrite an unexpired invite or active membership.
+        // Removed drivers, and drivers whose invite expired, may be re-invited.
         if env.storage().persistent().has(&invite_key) {
             let existing: DriverFleetStatus = env.storage().persistent().get(&invite_key).unwrap();
             match existing {
                 DriverFleetStatus::Pending => {
-                    panic_with_error!(&env, FleetError::DriverAlreadyInvited)
+                    if !invite_window_elapsed(&env, fleet_id, &driver) {
+                        panic_with_error!(&env, FleetError::DriverAlreadyInvited)
+                    }
                 }
                 DriverFleetStatus::Active => {
                     panic_with_error!(&env, FleetError::DriverAlreadyActive)
                 }
-                DriverFleetStatus::Removed => {
+                DriverFleetStatus::Removed | DriverFleetStatus::Expired => {
                     // Allow re-inviting a previously removed driver.
                 }
             }
         }
 
-        // Record the pending invite.
+        // Record the pending invite and when its acceptance window closes.
+        // Both records get a TTL that outlives the window (see the const
+        // assertion on INVITE_ACCEPTANCE_WINDOW_SECONDS), so the invite cannot
+        // be archived before the driver has had the full window to accept.
+        let expires_at = env
+            .ledger()
+            .timestamp()
+            .saturating_add(INVITE_ACCEPTANCE_WINDOW_SECONDS);
         env.storage()
             .persistent()
             .set(&invite_key, &DriverFleetStatus::Pending);
-        env.storage().persistent().extend_ttl(
-            &invite_key,
-            ttl::LEDGER_TTL_THRESHOLD,
-            ttl::LEDGER_TTL_EXTEND_TO,
+        env.storage().persistent().set(
+            &DataKey::InviteExpiry(fleet_id, driver.clone()),
+            &expires_at,
         );
+        renew_pending_invite(&env, fleet_id, &driver);
 
         // Emit event.
         env.events().publish(
@@ -1059,6 +1123,7 @@ impl FleetManagementContract {
         if status != DriverFleetStatus::Pending {
             panic_with_error!(&env, FleetError::DriverAlreadyActive);
         }
+        clear_invite_expiry(&env, fleet_id, &driver);
 
         // Transition to the terminal Removed state instead of deleting the
         // record, matching `remove_driver_from_fleet` so a cancelled invite
@@ -1121,8 +1186,14 @@ impl FleetManagementContract {
 
         match status {
             DriverFleetStatus::Active => panic_with_error!(&env, FleetError::DriverAlreadyActive),
-            DriverFleetStatus::Pending => {}
-            DriverFleetStatus::Removed => panic_with_error!(&env, FleetError::InviteNotFound),
+            DriverFleetStatus::Pending => {
+                if invite_window_elapsed(&env, fleet_id, &driver) {
+                    panic_with_error!(&env, FleetError::InviteExpired);
+                }
+            }
+            DriverFleetStatus::Removed | DriverFleetStatus::Expired => {
+                panic_with_error!(&env, FleetError::InviteNotFound)
+            }
         }
 
         // Guard against unbounded roster growth before changing membership state.
@@ -1130,10 +1201,11 @@ impl FleetManagementContract {
             panic_with_error!(&env, FleetError::RosterFull);
         }
 
-        // Promote driver to active.
+        // Promote driver to active; the acceptance window no longer applies.
         env.storage()
             .persistent()
             .set(&invite_key, &DriverFleetStatus::Active);
+        clear_invite_expiry(&env, fleet_id, &driver);
 
         // Update active driver count on the fleet profile.
         profile.total_active_drivers += 1;
@@ -1242,6 +1314,9 @@ impl FleetManagementContract {
         }
 
         // Transition to Removed terminal state instead of deleting, preserving historical record.
+        if status == DriverFleetStatus::Pending {
+            clear_invite_expiry(&env, fleet_id, &driver);
+        }
         env.storage()
             .persistent()
             .set(&invite_key, &DriverFleetStatus::Removed);
@@ -1345,20 +1420,50 @@ impl FleetManagementContract {
                     }
                 }
             }
-            Some(DriverFleetStatus::Pending) | Some(DriverFleetStatus::Removed) | None => driver,
+            Some(DriverFleetStatus::Pending)
+            | Some(DriverFleetStatus::Removed)
+            | Some(DriverFleetStatus::Expired)
+            | None => driver,
         }
     }
 
-    /// Return the status of a driver within a fleet, or `None` if no record
-    /// exists.  Useful for off-chain queries and integration tests.
+    /// Return the status of a driver within a fleet, or `None` if the driver
+    /// was never invited.  A pending invite whose acceptance window has
+    /// elapsed is reported as `DriverFleetStatus::Expired`, so clients can
+    /// distinguish an expired invitation from no invitation at all.
     pub fn get_driver_fleet_status(
         env: Env,
         fleet_id: u64,
         driver: Address,
     ) -> Option<DriverFleetStatus> {
+        let status: Option<DriverFleetStatus> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::DriverFleet(fleet_id, driver.clone()));
+        match status {
+            Some(DriverFleetStatus::Pending) if invite_window_elapsed(&env, fleet_id, &driver) => {
+                Some(DriverFleetStatus::Expired)
+            }
+            other => other,
+        }
+    }
+
+    /// Return the ledger timestamp after which a driver's pending invite can
+    /// no longer be accepted, or `None` when the driver has no pending invite
+    /// (never invited, already active, removed, or an invite issued before
+    /// acceptance windows existed). The value is still returned after the
+    /// window has elapsed, so clients can show when the invite expired.
+    pub fn get_invite_expiry(env: Env, fleet_id: u64, driver: Address) -> Option<u64> {
+        let status: Option<DriverFleetStatus> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::DriverFleet(fleet_id, driver.clone()));
+        if status != Some(DriverFleetStatus::Pending) {
+            return None;
+        }
         env.storage()
             .persistent()
-            .get(&DataKey::DriverFleet(fleet_id, driver))
+            .get(&DataKey::InviteExpiry(fleet_id, driver))
     }
 
     /// Return one page of the active driver roster for a fleet.
