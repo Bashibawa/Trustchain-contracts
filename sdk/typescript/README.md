@@ -293,6 +293,22 @@ The active delivery contract; `null` means verification is disabled.
 The in-flight rotation (`deliveryContract`, `proposedBy`, `activatesAt`) or
 `null`.
 
+#### Admin handover
+
+Admin rights move in two signed steps; the stored admin only changes when the
+nominee accepts.
+
+##### `proposeAdmin(params: ProposeEscrowAdminParams): Promise<void>`
+Signed by `params.currentAdmin` (must be the stored admin). Nominates
+`params.newAdmin`, replacing any earlier nomination.
+
+##### `cancelAdminProposal(params: CancelEscrowAdminProposalParams): Promise<void>`
+Signed by the current admin. Rejects with `InvalidState` if nothing is pending.
+
+##### `acceptAdmin(params: AcceptEscrowAdminParams): Promise<void>`
+Signed by `params.newAdmin`, which must equal the pending nominee
+(`Unauthorized` otherwise). Completes the transfer.
+
 ### DeliveryClient
 
 #### Methods

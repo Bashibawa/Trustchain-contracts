@@ -417,6 +417,42 @@ export class EscrowClient {
   }
 
   /**
+   * Nominate a new admin (step 1 of the two-party handover).
+   *
+   * Requires `currentAdmin` to sign and to match the stored admin, otherwise
+   * the contract rejects with `Unauthorized`. The stored admin is NOT changed
+   * until the nominee calls {@link EscrowClient.acceptAdmin}; a new proposal
+   * replaces any existing one.
+   */
+  async proposeAdmin(params: EscrowTypes.ProposeEscrowAdminParams, options?: ContractInvokeOptions): Promise<void> {
+    await this.invoker.call('propose_admin', [address(params.currentAdmin), address(params.newAdmin)], options);
+  }
+
+  /**
+   * Withdraw a pending admin nomination. Current admin only.
+   *
+   * Rejects with `InvalidState` when no proposal is pending and with
+   * `Unauthorized` when `currentAdmin` is not the stored admin.
+   */
+  async cancelAdminProposal(
+    params: EscrowTypes.CancelEscrowAdminProposalParams,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    await this.invoker.call('cancel_admin_proposal', [address(params.currentAdmin)], options);
+  }
+
+  /**
+   * Accept a pending admin nomination (step 2 of the two-party handover).
+   *
+   * Requires `newAdmin` to sign and to equal the pending nominee, otherwise
+   * the contract rejects with `Unauthorized` (`InvalidState` when nothing is
+   * pending). On success the stored admin is replaced and the proposal cleared.
+   */
+  async acceptAdmin(params: EscrowTypes.AcceptEscrowAdminParams, options?: ContractInvokeOptions): Promise<void> {
+    await this.invoker.call('accept_admin', [address(params.newAdmin)], options);
+  }
+
+  /**
    * Check if the protocol is paused
    */
   async isPaused(options?: ContractInvokeOptions): Promise<boolean> {

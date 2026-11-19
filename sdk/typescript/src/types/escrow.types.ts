@@ -181,6 +181,26 @@ export interface PendingDeliveryContractInfo {
   activatesAt: bigint;
 }
 
+/** Parameters for `propose_admin` (step 1 of the two-party admin handover). */
+export interface ProposeEscrowAdminParams {
+  /** Current admin; must sign and match the stored admin. */
+  currentAdmin: string;
+  /** Address nominated to become admin once it calls `acceptAdmin`. */
+  newAdmin: string;
+}
+
+/** Parameters for `cancel_admin_proposal`. */
+export interface CancelEscrowAdminProposalParams {
+  /** Current admin; must sign and match the stored admin. */
+  currentAdmin: string;
+}
+
+/** Parameters for `accept_admin` (step 2 of the two-party admin handover). */
+export interface AcceptEscrowAdminParams {
+  /** Nominated admin; must sign and match the pending proposal. */
+  newAdmin: string;
+}
+
 export interface SetFleetManagementContractParams {
   admin: string;
   fleetContract: string;
