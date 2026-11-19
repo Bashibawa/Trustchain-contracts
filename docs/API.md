@@ -1743,6 +1743,39 @@ Configure the identity/reputation contract address used for reputation penalties
 **Errors:**
 - `Unauthorized` - Caller is not an admin
 
+#### `set_delivery_contract` / `set_escrow_contract` (dispute resolution)
+Propose a new delivery or escrow peer address for the dispute contract. The
+setter only records a `PendingPeerContractChange` with
+`activates_at = now + PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS` (three days); the
+active `DeliveryContract` / `EscrowContract` pointer is **not** modified, so
+cross-contract calls keep targeting the current peer during the review window.
+A new proposal replaces any earlier pending one.
+
+**Parameters:**
+- `caller: Address` - Dispute admin
+- `delivery_contract` / `escrow_contract: Address` - Proposed peer address
+
+**Authorization:** Dispute admin only
+
+**Events:** `delivery_contract_proposed` / `escrow_contract_change_proposed`
+with `(caller, address, activates_at)`
+
+**Errors:**
+- `Unauthorized` - Caller is not a dispute admin
+
+#### `confirm_delivery_contract` / `confirm_escrow_contract` (dispute resolution)
+Permissionless. Switches the active pointer to the pending address once
+`activates_at` has been reached and clears the proposal, so a proposal is
+applied exactly once. Query pending state with `get_pending_delivery_contract`
+/ `get_pending_escrow_contract`.
+
+**Events:** `delivery_contract_set` / `escrow_contract_set` with
+`(proposed_by, address)`
+
+**Errors:**
+- `NoPendingContractChange` - No proposal is pending (including a second confirm)
+- `ContractChangeTimelockNotElapsed` - Called before `activates_at`
+
 #### `set_escrow_contract`
 Repoint the escrow contract this delivery contract cross-calls for every
 escrow-backed operation (funding, refunds, releases, disputes). Added in Issue
