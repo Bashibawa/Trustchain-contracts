@@ -419,3 +419,6 @@ Built with ❤️ by the Trustchain Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-72 -->
 - #72: Prevent archived page gaps from silently shortening listings
+
+<!-- handsoff-issue-73 -->
+- #73: Prevent archived escrow page gaps from silently shortening listings
