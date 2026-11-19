@@ -46,7 +46,7 @@ they are not reserved for anything and should not be inferred to mean "no error.
 | 7 | `InvalidAmount` | Escrow amount is not positive. |
 | 8 | `NoPendingSettlementChange` | `confirm_settlement_contract` called with no proposal pending. |
 | 10 | `InvalidDriver` | Driver address matches the sender or recipient, which is not permitted for escrow creation. |
-| 11 | `InvalidParties` | Sender and recipient are the same address. |
+| 11 | `InvalidParties` | Sender and recipient are the same address, or (with a delivery contract configured) the escrow sender or recipient does not match the delivery record. |
 | 12 | `BatchTooLarge` | `create_escrows_batch` list exceeds `MAX_BATCH_SIZE` (100). |
 
 Shared failures such as `InvalidState`, `DeliveryNotFound`, `InsufficientFunds`,

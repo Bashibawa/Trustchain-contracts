@@ -7389,3 +7389,158 @@ fn test_admin_freeze_funds_is_idempotent() {
 
     assert_eq!(client.get_escrow(&10405u64).status, EscrowStatus::Paused);
 }
+
+// ── Escrow ↔ delivery party invariants ───────────────────────────────────────
+
+/// Escrow + real delivery contract, wired in both directions with the
+/// delivery contract confirmed on the escrow side.
+struct WiredDelivery {
+    env: Env,
+    client: EscrowContractClient<'static>,
+    delivery: delivery_contract::DeliveryContractClient<'static>,
+    admin: Address,
+    token: Address,
+}
+
+fn setup_wired_delivery() -> WiredDelivery {
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let escrow_id = env.register(EscrowContract, ());
+    let delivery_id = env.register(delivery_contract::DeliveryContract, ());
+    let client = EscrowContractClient::new(&env, &escrow_id);
+    let delivery = delivery_contract::DeliveryContractClient::new(&env, &delivery_id);
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &0);
+    delivery.init(&admin, &escrow_id);
+    client.set_delivery_contract(&admin, &delivery_id);
+    env.ledger().set_timestamp(
+        env.ledger().timestamp() + shared_types::PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS,
+    );
+    client.confirm_delivery_contract();
+
+    WiredDelivery {
+        env,
+        client,
+        delivery,
+        admin,
+        token,
+    }
+}
+
+#[test]
+fn test_create_escrow_accepts_matching_sender() {
+    let w = setup_wired_delivery();
+    let sender = Address::generate(&w.env);
+    let recipient = Address::generate(&w.env);
+    let driver = Address::generate(&w.env);
+    let did = w
+        .delivery
+        .create_delivery(&sender, &recipient, &make_delivery_metadata(&w.env, 0));
+    mint(&w.env, &w.token, &sender, 1000);
+
+    w.client.create_escrow(
+        &sender,
+        &recipient,
+        &driver,
+        &u64::from(did),
+        &w.token,
+        &1000,
+        &None,
+    );
+
+    let record = w.client.get_escrow(&u64::from(did));
+    assert_eq!(record.sender, sender);
+    assert_eq!(record.status, EscrowStatus::Locked);
+}
+
+/// A third party may not attach funds to another sender's delivery: the
+/// escrow sender must be the delivery's sender. Nothing moves on rejection.
+#[test]
+fn test_create_escrow_rejects_foreign_sender() {
+    let w = setup_wired_delivery();
+    let sender = Address::generate(&w.env);
+    let interloper = Address::generate(&w.env);
+    let recipient = Address::generate(&w.env);
+    let driver = Address::generate(&w.env);
+    let did = w
+        .delivery
+        .create_delivery(&sender, &recipient, &make_delivery_metadata(&w.env, 0));
+    mint(&w.env, &w.token, &interloper, 1000);
+
+    let result = w.client.try_create_escrow(
+        &interloper,
+        &recipient,
+        &driver,
+        &u64::from(did),
+        &w.token,
+        &1000,
+        &None,
+    );
+    match result {
+        Err(Ok(err)) => assert_eq!(err, EscrowError::InvalidParties.into()),
+        _ => panic!("Expected EscrowError::InvalidParties for a foreign sender"),
+    }
+    assert!(!w.client.has_escrow(&u64::from(did)));
+    assert_eq!(balance(&w.env, &w.token, &interloper), 1000);
+    assert_eq!(w.client.get_total_locked(&w.token), 0);
+
+    // The delivery ID is still available to its real sender afterwards.
+    mint(&w.env, &w.token, &sender, 1000);
+    w.client.create_escrow(
+        &sender,
+        &recipient,
+        &driver,
+        &u64::from(did),
+        &w.token,
+        &1000,
+        &None,
+    );
+    assert_eq!(w.client.get_escrow(&u64::from(did)).sender, sender);
+}
+
+/// Batch creation applies the same sender check per element, and one foreign
+/// delivery in the batch reverts the whole batch atomically.
+#[test]
+fn test_create_escrows_batch_rejects_foreign_sender_atomically() {
+    let w = setup_wired_delivery();
+    let sender = Address::generate(&w.env);
+    let other_sender = Address::generate(&w.env);
+    let recipient = Address::generate(&w.env);
+    let driver = Address::generate(&w.env);
+    let own = w
+        .delivery
+        .create_delivery(&sender, &recipient, &make_delivery_metadata(&w.env, 0));
+    let foreign = w.delivery.create_delivery(
+        &other_sender,
+        &recipient,
+        &make_delivery_metadata(&w.env, 0),
+    );
+    mint(&w.env, &w.token, &sender, 2000);
+
+    let mut batch = soroban_sdk::Vec::new(&w.env);
+    batch.push_back((u64::from(own), driver.clone(), 1000i128, None::<u64>));
+    batch.push_back((u64::from(foreign), driver.clone(), 1000i128, None::<u64>));
+    let result = w
+        .client
+        .try_create_escrows_batch(&sender, &recipient, &w.token, &batch);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, EscrowError::InvalidParties.into()),
+        _ => panic!("Expected EscrowError::InvalidParties for a foreign delivery in batch"),
+    }
+    assert!(!w.client.has_escrow(&u64::from(own)));
+    assert!(!w.client.has_escrow(&u64::from(foreign)));
+    assert_eq!(balance(&w.env, &w.token, &sender), 2000);
+
+    // The matching subset succeeds.
+    let mut ok_batch = soroban_sdk::Vec::new(&w.env);
+    ok_batch.push_back((u64::from(own), driver.clone(), 1000i128, None::<u64>));
+    assert_eq!(
+        w.client
+            .create_escrows_batch(&sender, &recipient, &w.token, &ok_batch),
+        1
+    );
+    assert_eq!(w.client.get_escrow(&u64::from(own)).sender, sender);
+}

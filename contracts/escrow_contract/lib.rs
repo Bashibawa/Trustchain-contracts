@@ -248,8 +248,11 @@ fn get_delivery_contract(env: &Env) -> Option<Address> {
 
 /// When the delivery contract is configured, cross-call it to verify that:
 /// 1. The delivery exists (panics with DeliveryNotFound if not).
-/// 2. The supplied `recipient` matches the delivery record's recipient.
-/// 3. The supplied `driver` matches the delivery record's driver, OR the
+/// 2. The escrow `sender` matches the delivery record's sender. Without this a
+///    third party could fund (and so own the refund/cancel path of) another
+///    sender's delivery ID, splitting escrow ownership from delivery ownership.
+/// 3. The supplied `recipient` matches the delivery record's recipient.
+/// 4. The supplied `driver` matches the delivery record's driver, OR the
 ///    delivery has no driver yet (the driver field is `None`, meaning
 ///    `assign_driver` hasn't been called yet — the ordering constraint is
 ///    documented: escrow creation may precede or follow driver assignment, but
@@ -269,6 +272,7 @@ fn get_delivery_contract(env: &Env) -> Option<Address> {
 fn verify_delivery_if_configured(
     env: &Env,
     delivery_id: u64,
+    sender: &Address,
     recipient: &Address,
     driver: &Address,
 ) {
@@ -283,7 +287,9 @@ fn verify_delivery_if_configured(
         soroban_sdk::vec![env, shared_types::DeliveryId::from(delivery_id).into_val(env)],
     );
 
-    if delivery.recipient != *recipient {
+    // All three parties must agree with the delivery record before any funds
+    // move: sender and recipient strictly, driver when one is assigned.
+    if delivery.sender != *sender || delivery.recipient != *recipient {
         panic_with_error!(env, EscrowError::InvalidParties);
     }
 
@@ -1187,10 +1193,10 @@ impl EscrowContract {
         }
         validate_token_contract(&env, &token);
         // Issue #295: when a delivery contract is configured, cross-call it to
-        // confirm the delivery exists and that the supplied recipient/driver
-        // match the delivery record. Skipped when unconfigured so existing
+        // confirm the delivery exists and that the supplied sender, recipient
+        // and driver match the delivery record. Skipped when unconfigured so existing
         // deployments and tests continue to work unchanged.
-        verify_delivery_if_configured(&env, delivery_id, &recipient, &driver);
+        verify_delivery_if_configured(&env, delivery_id, &sender, &recipient, &driver);
         let payout_address: Option<Address> = if let (Some(fleet_addr), Some(fid)) =
             (get_fleet_management_contract(&env), fleet_id)
         {
@@ -1369,7 +1375,7 @@ impl EscrowContract {
                 }
                 // Issue #295: same optional delivery-verification check as
                 // create_escrow — skipped when no delivery contract is configured.
-                verify_delivery_if_configured(&env, delivery_id, &recipient, &driver);
+                verify_delivery_if_configured(&env, delivery_id, &sender, &recipient, &driver);
 
                 // Issue #378: snapshot the fleet payout address at creation time,
                 // mirroring create_escrow. Without this, batch-created escrows
