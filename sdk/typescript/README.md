@@ -325,6 +325,27 @@ Get the driver's identity and reputation profile through the delivery contract.
 Get a delivery record and its optional escrow record, together with the contract's
 synchronization check.
 
+#### Peer-only dispute state operations
+
+These wrap entrypoints that the contract authorizes for a **peer contract
+address only**. In normal operation they are invoked contract-to-contract;
+the wrappers exist for integration automation, simulation and tests. The
+client throws before submitting when `caller` is not a contract (`C...`)
+address, and the contract rejects any contract other than the configured
+peer with `Unauthorized`.
+
+##### `syncDisputeFromEscrow(params: SyncDisputeFromEscrowParams): Promise<void>`
+Mark a delivery `Disputed` to mirror an administrator escrow freeze.
+`params.caller` must be the configured escrow contract; `params.reporter` is
+recorded in the `delivery_disputed` event. Valid from `Pending`, `Active`,
+`InTransit` and `Delivered`; an already `Disputed` delivery is left unchanged,
+and any other state fails with `InvalidState`.
+
+##### `resolveDispute(params: ResolveDeliveryDisputeParams): Promise<void>`
+Move a delivery from `Disputed` to `Resolved`. `params.caller` must be the
+configured dispute resolution contract. Fails with `InvalidState` when the
+delivery is not `Disputed`, and while the escrow is paused.
+
 ### DisputeResolutionClient
 
 #### Methods
