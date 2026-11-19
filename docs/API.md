@@ -60,6 +60,14 @@ non-paginated sender/recipient/driver getters are convenient for small indexes
 but return at most the first 100 records; use the page methods to enumerate
 larger indexes.
 
+**Index storage lifetime (escrow).** Each index is stored as 64-ID pages
+(`EscrowIndex`) plus a length counter (`EscrowIndexLen`), both persistent.
+Appending an ID extends the page it writes and the length together to
+`LEDGER_TTL_EXTEND_TO`, and every read extends the length and each page it
+returns IDs from. A full page is never written again, so long-idle history is
+kept alive by reading it (e.g. a periodic keeper walking
+`get_escrows_page`); the length and the pages in use never expire apart.
+
 ### Interim: Event-Replay Indexing
 
 For off-chain applications requiring advanced queries (e.g., deliveries in a specific date range, by cargo category, or paginated results), the recommended interim approach is **event-replay indexing**:

@@ -7527,3 +7527,141 @@ fn test_sweep_after_idle_never_includes_live_escrow() {
     assert_eq!(balance(&env, &token, &driver), 1000);
     assert_eq!(client.get_total_locked(&token), 0);
 }
+
+// ── Owner index TTL: pages and lengths expire together, never apart ──────────
+//
+// `EscrowIndex` pages and `EscrowIndexLen` are persistent entries. If either
+// lapsed while the other survived, historical escrows would vanish from
+// enumeration (or the next push would overwrite page 0). Every push extends
+// the page it writes and the length together; every read renews the length
+// and the pages it touches.
+
+fn index_ttls(env: &Env, contract_id: &Address, owner: &Address, kind: u32, page: u32) -> (u32, u32) {
+    let page_key = DataKey::EscrowIndex(owner.clone(), kind, page);
+    let len_key = DataKey::EscrowIndexLen(owner.clone(), kind);
+    env.as_contract(contract_id, || {
+        (
+            env.storage().persistent().get_ttl(&page_key),
+            env.storage().persistent().get_ttl(&len_key),
+        )
+    })
+}
+
+const INDEX_DRIFT: u32 = ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 1;
+
+#[test]
+fn test_escrow_index_push_extends_page_and_len_together() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    mint(&env, &token, &sender, 100);
+
+    client.create_escrow(&sender, &recipient, &driver, &13001u64, &token, &100, &None);
+
+    for (owner, kind) in [(&sender, 0u32), (&recipient, 1), (&driver, 2)] {
+        let (page_ttl, len_ttl) = index_ttls(&env, &contract_id, owner, kind, 0);
+        assert_eq!(page_ttl, ttl::LEDGER_TTL_EXTEND_TO, "kind {kind} page");
+        assert_eq!(len_ttl, ttl::LEDGER_TTL_EXTEND_TO, "kind {kind} len");
+        assert!(page_ttl > default_persistent_ttl(&env, &contract_id));
+    }
+}
+
+#[test]
+fn test_escrow_index_push_after_idle_realigns_page_and_len() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let sender = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    mint(&env, &token, &sender, 200);
+
+    client.create_escrow(&sender, &Address::generate(&env), &Address::generate(&env), &13002u64, &token, &100, &None);
+    env.ledger().with_mut(|l| l.sequence_number += INDEX_DRIFT);
+    let (page_ttl, len_ttl) = index_ttls(&env, &contract_id, &sender, 0, 0);
+    assert!(page_ttl < ttl::LEDGER_TTL_THRESHOLD && len_ttl < ttl::LEDGER_TTL_THRESHOLD);
+
+    client.create_escrow(&sender, &Address::generate(&env), &Address::generate(&env), &13003u64, &token, &100, &None);
+    assert_eq!(
+        index_ttls(&env, &contract_id, &sender, 0, 0),
+        (ttl::LEDGER_TTL_EXTEND_TO, ttl::LEDGER_TTL_EXTEND_TO)
+    );
+    let ids = client.get_escrows_by_sender(&sender);
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids.get(0), Some(13002));
+    assert_eq!(ids.get(1), Some(13003));
+}
+
+/// A full page is never written again, so reading it must keep it in step
+/// with the (still-growing) length — otherwise old IDs would drop out of the
+/// listing while their records survive.
+#[test]
+fn test_escrow_index_read_renews_full_page_with_len() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let sender = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    mint(&env, &token, &sender, 65);
+    // Filling a whole 64-ID page in one batch exceeds the default test budget.
+    env.cost_estimate().disable_resource_limits();
+    env.cost_estimate().budget().reset_unlimited();
+
+    let mut batch = soroban_sdk::Vec::new(&env);
+    for i in 0..64u64 {
+        batch.push_back((13100 + i, Address::generate(&env), 1i128, None::<u64>));
+    }
+    client.create_escrows_batch(&sender, &Address::generate(&env), &token, &batch);
+
+    // Page 0 is now full. Let it drift, then push onto page 1.
+    env.ledger().with_mut(|l| l.sequence_number += INDEX_DRIFT);
+    client.create_escrow(&sender, &Address::generate(&env), &Address::generate(&env), &13200u64, &token, &1, &None);
+    let (page0_ttl, len_ttl) = index_ttls(&env, &contract_id, &sender, 0, 0);
+    assert_eq!(len_ttl, ttl::LEDGER_TTL_EXTEND_TO);
+    assert!(page0_ttl < ttl::LEDGER_TTL_THRESHOLD);
+
+    // Reading across both pages renews page 0 back in line with the length.
+    let ids = client.get_escrows_page(&sender, &0, &0, &100);
+    assert_eq!(ids.len(), 65);
+    assert_eq!(ids.get(0), Some(13100));
+    assert_eq!(ids.get(64), Some(13200));
+    assert_eq!(
+        index_ttls(&env, &contract_id, &sender, 0, 0),
+        (ttl::LEDGER_TTL_EXTEND_TO, ttl::LEDGER_TTL_EXTEND_TO)
+    );
+    assert_eq!(index_ttls(&env, &contract_id, &sender, 0, 1).0, ttl::LEDGER_TTL_EXTEND_TO);
+}
+
+#[test]
+fn test_escrow_index_read_for_unknown_owner_is_empty_and_writes_nothing() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    let stranger = Address::generate(&env);
+
+    assert_eq!(client.get_escrows_page(&stranger, &0, &0, &10).len(), 0);
+    let len_key = DataKey::EscrowIndexLen(stranger.clone(), 0);
+    let page_key = DataKey::EscrowIndex(stranger.clone(), 0, 0);
+    env.as_contract(&contract_id, || {
+        assert!(!env.storage().persistent().has(&len_key));
+        assert!(!env.storage().persistent().has(&page_key));
+    });
+}
+
+#[test]
+fn test_escrow_index_offset_past_end_is_empty() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let sender = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    mint(&env, &token, &sender, 100);
+    client.create_escrow(&sender, &Address::generate(&env), &Address::generate(&env), &13300u64, &token, &100, &None);
+
+    assert_eq!(client.get_escrows_page(&sender, &0, &1, &10).len(), 0);
+    assert_eq!(client.get_escrows_page(&sender, &0, &0, &0).len(), 0);
+}
