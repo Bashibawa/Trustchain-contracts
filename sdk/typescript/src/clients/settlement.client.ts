@@ -2,6 +2,7 @@
  * Typed SDK client for SettlementContract
  */
 
+import { StrKey } from '@stellar/stellar-sdk';
 import { ContractInvokeOptions } from '../types/common.types';
 import * as SettlementTypes from '../types/settlement.types';
 import { ContractInvoker, address, i128 } from './invoker';
@@ -65,6 +66,29 @@ export class SettlementClient {
   /** Read the currently active escrow peer. Reverts with `NotInitialized` before `init`. */
   async getEscrowContract(options?: ContractInvokeOptions): Promise<string> {
     return String(await this.invoker.call('get_escrow_contract', [], options));
+  }
+
+  /**
+   * Configure the trusted swap router (admin only). Overwrites any existing
+   * router. `router` must be a contract (`C...`) address; anything else is
+   * rejected locally before a transaction is built.
+   *
+   * Reverts with `Unauthorized` when `admin` is not the stored admin.
+   */
+  async setSwapRouter(params: SettlementTypes.SetSwapRouterParams, options?: ContractInvokeOptions): Promise<void> {
+    if (!StrKey.isValidContract(params.router)) {
+      throw new TypeError(`router must be a contract address (C...), got "${params.router}"`);
+    }
+    await this.invoker.call('set_swap_router', [address(params.admin), address(params.router)], options);
+  }
+
+  /**
+   * Read the configured swap router, or `null` when none is set (in which case
+   * `execute_settlement_swap` reverts with `SwapRouterNotConfigured`).
+   */
+  async getSwapRouter(options?: ContractInvokeOptions): Promise<string | null> {
+    const value = await this.invoker.call('get_swap_router', [], options);
+    return value === null || value === undefined ? null : String(value);
   }
 
   async getDriverPreference(driver: string, options?: ContractInvokeOptions): Promise<string | null> {

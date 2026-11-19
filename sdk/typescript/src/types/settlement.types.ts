@@ -47,3 +47,13 @@ export interface PendingEscrowContractChange {
    */
   activatesAt: bigint;
 }
+
+export interface SetSwapRouterParams {
+  /** Must be the stored settlement admin; the call requires its auth. */
+  admin: string;
+  /**
+   * Router contract (`C...` address) implementing
+   * `swap_exact_tokens_for_tokens`. Overwrites any previously configured router.
+   */
+  router: string;
+}

@@ -347,3 +347,13 @@ const active = await settlement.getEscrowContract();
 - `confirmEscrowContract` → `confirm_escrow_contract` (permissionless). Reverts with `NoPendingContractChange` or `ContractChangeTimelockNotElapsed` while `now < activatesAt`.
 - `getPendingEscrowContract` → `get_pending_escrow_contract`; `null` when nothing is pending.
 - `getEscrowContract` → `get_escrow_contract`.
+
+#### Swap router configuration
+
+```typescript
+await settlement.setSwapRouter({ admin, router: 'CROUTER...' });
+const router = await settlement.getSwapRouter(); // string | null
+```
+
+- `setSwapRouter` → `set_swap_router` (admin only; reverts with `Unauthorized` otherwise). `router` must be a contract (`C...`) address; other values throw a `TypeError` before any transaction is built.
+- `getSwapRouter` → `get_swap_router`; `null` means no router is configured and `execute_settlement_swap` will revert with `SwapRouterNotConfigured`.
