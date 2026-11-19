@@ -34,6 +34,17 @@ export class FleetManagementClient {
   }
 
   /**
+   * Return the identity contract change queued by `setIdentityContract`, or
+   * `null` when no change is pending. Lets operators inspect the pending peer
+   * address and its activation time before calling `confirmIdentityContract`.
+   * Exposes the on-chain `get_pending_identity_contract` query.
+   */
+  async getPendingIdentityContract(options?: ContractInvokeOptions): Promise<FleetManagementTypes.PendingContractAddress | null> {
+    const value = await this.invoker.call('get_pending_identity_contract', [], options);
+    return value == null ? null : decodePendingContractAddress(value, 'get_pending_identity_contract');
+  }
+
+  /**
    * Return the configured identity_reputation_contract address, if any.
    * Returns `null` when no identity contract has been wired to this fleet contract yet.
    * Exposes the on-chain `get_identity_contract` read getter (Issue #486).

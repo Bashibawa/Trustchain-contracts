@@ -145,6 +145,12 @@ Timelocked fleet changes can be inspected before they are confirmed. Each
 getter returns `null` when nothing is pending.
 
 ```typescript
+// Identity peer queued by setIdentityContract, awaiting confirmIdentityContract
+const pendingIdentity = await fleetClient.getPendingIdentityContract();
+if (pendingIdentity && BigInt(Math.floor(Date.now() / 1000)) >= pendingIdentity.activatesAt) {
+  await fleetClient.confirmIdentityContract();
+}
+
 // Escrow peer queued by setEscrowContract, awaiting confirmEscrowContract
 const pendingEscrow = await fleetClient.getPendingEscrowContract();
 if (pendingEscrow) {
