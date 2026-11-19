@@ -52,6 +52,58 @@ export class DisputeResolutionClient {
     return String(await this.invoker.call('get_escrow_contract', [], options));
   }
 
+  /**
+   * Propose a replacement delivery contract (admin only). The live pointer
+   * returned by `getDeliveryContract` is unchanged until
+   * `confirmDeliveryContract` succeeds after the peer-change timelock.
+   */
+  async setDeliveryContract(
+    params: DisputeResolutionTypes.SetDisputeDeliveryContractParams,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    await this.invoker.call('set_delivery_contract', [address(params.caller), address(params.deliveryContract)], options);
+  }
+
+  /**
+   * Activate the pending delivery contract. Fails with
+   * `NoPendingContractChange` when nothing is proposed and
+   * `ContractChangeTimelockNotElapsed` before `activatesAt`.
+   */
+  async confirmDeliveryContract(options?: ContractInvokeOptions): Promise<void> {
+    await this.invoker.call('confirm_delivery_contract', [], options);
+  }
+
+  /** The pending delivery-contract proposal, or `null` when none exists. */
+  async getPendingDeliveryContract(options?: ContractInvokeOptions): Promise<DisputeResolutionTypes.PendingPeerContractChange | null> {
+    return decodePendingPeerChange(await this.invoker.call('get_pending_delivery_contract', [], options));
+  }
+
+  /**
+   * Propose a replacement escrow contract (admin only). The live pointer
+   * returned by `getEscrowContract` is unchanged until
+   * `confirmEscrowContract` succeeds after the peer-change timelock.
+   */
+  async setEscrowContract(
+    params: DisputeResolutionTypes.SetDisputeEscrowContractParams,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    await this.invoker.call('set_escrow_contract', [address(params.caller), address(params.escrowContract)], options);
+  }
+
+  /**
+   * Activate the pending escrow contract. Fails with
+   * `NoPendingContractChange` when nothing is proposed and
+   * `ContractChangeTimelockNotElapsed` before `activatesAt`.
+   */
+  async confirmEscrowContract(options?: ContractInvokeOptions): Promise<void> {
+    await this.invoker.call('confirm_escrow_contract', [], options);
+  }
+
+  /** The pending escrow-contract proposal, or `null` when none exists. */
+  async getPendingEscrowContract(options?: ContractInvokeOptions): Promise<DisputeResolutionTypes.PendingPeerContractChange | null> {
+    return decodePendingPeerChange(await this.invoker.call('get_pending_escrow_contract', [], options));
+  }
+
   async setIdentityReputationContract(
     params: DisputeResolutionTypes.SetIdentityReputationContractParams,
     options?: ContractInvokeOptions
@@ -201,6 +253,18 @@ export class DisputeResolutionClient {
     }
     return count;
   }
+}
+
+function decodePendingPeerChange(value: unknown): DisputeResolutionTypes.PendingPeerContractChange | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    address: String(record.address),
+    proposedBy: String(record.proposed_by),
+    activatesAt: BigInt(String(record.activates_at)),
+  };
 }
 
 function assertReputationAdjustment(name: string, value: number): void {

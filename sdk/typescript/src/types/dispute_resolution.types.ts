@@ -22,6 +22,28 @@ export interface RemoveAdminParams {
   oldAdmin: string;
 }
 
+export interface SetDisputeDeliveryContractParams {
+  caller: string;
+  deliveryContract: string;
+}
+
+export interface SetDisputeEscrowContractParams {
+  caller: string;
+  escrowContract: string;
+}
+
+/**
+ * A proposed peer-contract replacement awaiting confirmation. Mirrors the
+ * Rust `PendingPeerContractChange` struct returned by
+ * `get_pending_delivery_contract` / `get_pending_escrow_contract`.
+ */
+export interface PendingPeerContractChange {
+  address: string;
+  proposedBy: string;
+  /** Ledger timestamp (seconds) from which the change may be confirmed. */
+  activatesAt: bigint;
+}
+
 export interface SetIdentityReputationContractParams {
   caller: string;
   reputationContract: string;

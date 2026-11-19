@@ -329,6 +329,24 @@ synchronization check.
 
 #### Methods
 
+##### Peer contract rotation
+
+Replacing the delivery or escrow contract that the dispute contract talks to
+is a two-step, timelocked change. `set*Contract` (admin only) records a
+proposal; the live pointer returned by `getDeliveryContract` /
+`getEscrowContract` does not change until `confirm*Contract` succeeds at or
+after the proposal's `activatesAt`.
+
+| Step | Delivery peer | Escrow peer |
+| --- | --- | --- |
+| Propose | `setDeliveryContract({ caller, deliveryContract })` | `setEscrowContract({ caller, escrowContract })` |
+| Inspect | `getPendingDeliveryContract()` | `getPendingEscrowContract()` |
+| Activate | `confirmDeliveryContract()` | `confirmEscrowContract()` |
+
+The inspect methods return `PendingPeerContractChange | null`. Confirming
+fails with `NoPendingContractChange` when nothing is proposed and with
+`ContractChangeTimelockNotElapsed` before `activatesAt`.
+
 ##### Reputation policy
 
 The contract applies a flat reputation adjustment to the driver for each
