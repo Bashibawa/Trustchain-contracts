@@ -2758,6 +2758,15 @@ Grant or revoke cross-contract call authorization.
 
 **Events:** `authorized_contract_updated` - `(admin, contract_addr, authorized)`
 
+**Grant lifetime:** A grant is a persistent `AuthorizedContract(contract_addr)`
+entry. It is extended to `LEDGER_TTL_EXTEND_TO` when granted (here or in
+`init`) **and again on every authorized use**: each successful
+`increase_reputation`, `decrease_reputation`, `award_reputation`, or
+contract-initiated `suspend_driver` renews the caller's grant and the instance
+TTL. An active delivery/dispute peer therefore cannot lose permission to
+storage archival; only a grant that goes unused for the full TTL ages out.
+Revoking removes the entry, and renewal never re-creates it.
+
 #### `is_authorized_contract`
 Check whether a contract address is authorized to make cross-contract calls.
 
@@ -2765,6 +2774,9 @@ Check whether a contract address is authorized to make cross-contract calls.
 - `contract_addr: Address` - Contract address to check
 
 **Returns:** `bool`
+
+**Notes:** Read-only — it does not renew the grant (Issue #392). See the grant
+lifetime note on `set_authorized_contract`.
 
 #### `update_driver_kyc_status`
 Update a driver's KYC verification status.
