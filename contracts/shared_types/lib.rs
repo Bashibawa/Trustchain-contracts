@@ -280,7 +280,7 @@ pub mod events {
     }
 
     pub fn identity_reputation_contract_updated(env: &Env) -> Symbol {
-        Symbol::new(env, "identity_reputation_contract_updated")
+        Symbol::new(env, "identity_contract_updated")
     }
 
     pub fn dispute_contract_updated(env: &Env) -> Symbol {
