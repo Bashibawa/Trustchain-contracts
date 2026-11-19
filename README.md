@@ -413,3 +413,6 @@ Built with ❤️ by the Trustchain Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-569 -->
 - #569: Dispute: Restrict Dispute Creation on Already Delivered Deliveries Beyond Allowed Window
+
+<!-- handsoff-issue-68 -->
+- #68: Keep reputation award from blocking fund-safe delivery confirmation
