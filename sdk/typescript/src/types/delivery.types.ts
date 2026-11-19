@@ -37,6 +37,13 @@ export enum DeliveryErrorCode {
    * at a point where a funded escrow is a precondition (e.g. `mark_in_transit`).
    */
   EscrowNotLocked = 6,
+  /** `get_deliveries_page` was called with an unknown index kind. */
+  InvalidIndexKind = 7,
+  /**
+   * `confirm_delivery` found the escrow bound to a different driver, sender,
+   * or recipient than the delivery record.
+   */
+  EscrowPartyMismatch = 8,
 }
 
 /**
@@ -50,6 +57,7 @@ export const DeliveryErrorCodes = {
   InvalidParties: 5,
   EscrowNotLocked: 6,
   InvalidIndexKind: 7,
+  EscrowPartyMismatch: 8,
 } as const;
 
 export interface CreateDeliveryParams {

@@ -108,6 +108,20 @@ fn index_page(env: &Env, owner: Address, kind: u32, offset: u32, limit: u32) -> 
     out
 }
 
+/// `true` when the escrow is bound to exactly the delivery's sender,
+/// recipient, and assigned driver. A delivery with no driver never matches:
+/// there is no one the escrow could legitimately pay.
+fn escrow_parties_match(delivery: &DeliveryRecord, escrow: &shared_types::EscrowRecord) -> bool {
+    match &delivery.driver {
+        Some(driver) => {
+            *driver == escrow.driver
+                && delivery.sender == escrow.sender
+                && delivery.recipient == escrow.recipient
+        }
+        None => false,
+    }
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -126,6 +140,10 @@ pub enum DeliveryError {
     /// (currently: the `Active -> InTransit` transition). See Issue #298.
     EscrowNotLocked = 6,
     InvalidIndexKind = 7,
+    /// The escrow securing this delivery is bound to a different driver,
+    /// sender, or recipient than the delivery record, so confirming would
+    /// mark the delivery complete while paying someone else.
+    EscrowPartyMismatch = 8,
 }
 
 mod constants {
@@ -935,6 +953,22 @@ impl DeliveryContract {
             .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NotInitialized));
 
         use soroban_sdk::IntoVal;
+
+        // The escrow is created by a separate call on a separate contract and
+        // looked up only by delivery ID, so nothing else guarantees it pays
+        // the driver who actually carried this delivery. Bind the parties
+        // before marking the delivery complete; otherwise a mismatched pair
+        // would record the delivery as done while escrow pays a different
+        // address (and reputation would credit the wrong driver).
+        let escrow: shared_types::EscrowRecord = env.invoke_contract(
+            &escrow_address,
+            &Symbol::new(&env, "get_escrow"),
+            soroban_sdk::vec![&env, u64::from(delivery_id).into_val(&env)],
+        );
+        if !escrow_parties_match(&delivery, &escrow) {
+            panic_with_error!(&env, DeliveryError::EscrowPartyMismatch);
+        }
+
         let _: () = env.invoke_contract(
             &escrow_address,
             &soroban_sdk::Symbol::new(&env, "mark_holdback_escrow"),

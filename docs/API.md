@@ -1290,6 +1290,12 @@ Recipient confirms successful delivery.
 - `NotAuthorized` - Caller is not recipient
 - `InvalidState` - Delivery not in InTransit state
 - `EscrowNotConfigured` - Escrow contract not set
+- `EscrowPartyMismatch` - The escrow for this delivery ID is bound to a different driver, sender, or recipient than the delivery record; nothing is changed
+
+Before moving the escrow to holdback, the contract reads the escrow and
+requires its `driver`, `sender`, and `recipient` to equal the delivery's
+assigned driver, sender, and recipient. This prevents a delivery from being
+marked complete while escrow pays (and reputation credits) a different driver.
 
 **Events:** `delivery_confirmed`
 

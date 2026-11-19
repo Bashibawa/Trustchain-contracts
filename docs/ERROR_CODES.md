@@ -65,6 +65,7 @@ Shared failures such as `InvalidState`, `DeliveryNotFound`, `InsufficientFunds`,
 | 5 | `InvalidParties` | Sender and recipient are the same address. |
 | 6 | `EscrowNotLocked` | The escrow is absent or not locked when funded escrow is required. |
 | 7 | `InvalidIndexKind` | `get_deliveries_page` was called with an unknown index kind. |
+| 8 | `EscrowPartyMismatch` | `confirm_delivery` found the escrow bound to a different driver, sender, or recipient than the delivery. |
 
 Shared failures such as `InvalidState`, `Unauthorized`, `DeliveryNotFound`, and
 `NotInitialized` use `TrustchainError`.

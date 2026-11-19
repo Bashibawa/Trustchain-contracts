@@ -332,6 +332,9 @@ fn setup_full(
     // `raise_dispute` is restricted to the configured dispute contract
     // (Issue #444), so the fixture registers one.
     client.set_dispute_resolution_contract(&shipper, &dispute_id);
+    // Bind the mock escrow to the fixture's parties so `confirm_delivery`'s
+    // escrow party check sees a correctly funded escrow by default.
+    set_mock_escrow_parties(env, &escrow_id, &shipper, &recipient, &driver);
     (client, shipper, driver, recipient, escrow_id, reputation_id)
 }
 
@@ -2999,4 +3002,100 @@ fn test_assign_driver_succeeds_registered_active_driver() {
         client.get_delivery(&delivery_id).status,
         DeliveryStatus::Active
     );
+}
+
+// ── confirm_delivery escrow party binding ────────────────────────────────────
+
+fn in_transit_delivery(
+    env: &Env,
+    client: &DeliveryContractClient,
+    shipper: &Address,
+    recipient: &Address,
+    driver: &Address,
+) -> DeliveryId {
+    let delivery_id = client.create_delivery(shipper, recipient, &get_test_metadata(env, 1));
+    client.assign_driver(shipper, &delivery_id, driver);
+    client.mark_in_transit(driver, &delivery_id);
+    delivery_id
+}
+
+fn assert_confirm_rejected_for_party_mismatch(
+    env: &Env,
+    client: &DeliveryContractClient,
+    escrow_id: &Address,
+    recipient: &Address,
+    delivery_id: DeliveryId,
+) {
+    let result = client.try_confirm_delivery(recipient, &delivery_id);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, DeliveryError::EscrowPartyMismatch.into()),
+        other => panic!("Expected DeliveryError::EscrowPartyMismatch, got {:?}", other),
+    }
+    let delivery = client.get_delivery(&delivery_id);
+    assert_eq!(delivery.status, DeliveryStatus::InTransit);
+    assert_eq!(delivery.delivered_at, None);
+    let holdback: Option<u64> = env.as_contract(escrow_id, || {
+        env.storage().temporary().get(&Symbol::new(env, "holdback"))
+    });
+    assert_eq!(holdback, None, "escrow must not move to holdback");
+}
+
+#[test]
+fn test_confirm_delivery_succeeds_when_escrow_parties_match() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, _escrow_id, _) = setup_full(&env);
+    let delivery_id = in_transit_delivery(&env, &client, &shipper, &recipient, &driver);
+
+    client.confirm_delivery(&recipient, &delivery_id);
+
+    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::Delivered);
+    let (_, escrow, synced) = client.get_combined_state(&delivery_id);
+    assert_eq!(escrow.unwrap().driver, driver);
+    assert!(synced);
+}
+
+#[test]
+fn test_confirm_delivery_rejects_escrow_paying_a_different_driver() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = in_transit_delivery(&env, &client, &shipper, &recipient, &driver);
+    let other_driver = Address::generate(&env);
+    set_mock_escrow_parties(&env, &escrow_id, &shipper, &recipient, &other_driver);
+
+    assert_confirm_rejected_for_party_mismatch(&env, &client, &escrow_id, &recipient, delivery_id);
+}
+
+#[test]
+fn test_confirm_delivery_rejects_escrow_with_different_sender() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = in_transit_delivery(&env, &client, &shipper, &recipient, &driver);
+    set_mock_escrow_parties(&env, &escrow_id, &Address::generate(&env), &recipient, &driver);
+
+    assert_confirm_rejected_for_party_mismatch(&env, &client, &escrow_id, &recipient, delivery_id);
+}
+
+#[test]
+fn test_confirm_delivery_rejects_escrow_with_different_recipient() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = in_transit_delivery(&env, &client, &shipper, &recipient, &driver);
+    set_mock_escrow_parties(&env, &escrow_id, &shipper, &Address::generate(&env), &driver);
+
+    assert_confirm_rejected_for_party_mismatch(&env, &client, &escrow_id, &recipient, delivery_id);
+}
+
+#[test]
+fn test_confirm_delivery_party_mismatch_does_not_credit_reputation() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, reputation_id) = setup_full(&env);
+    let delivery_id = in_transit_delivery(&env, &client, &shipper, &recipient, &driver);
+    set_mock_escrow_parties(&env, &escrow_id, &shipper, &recipient, &Address::generate(&env));
+
+    let _ = client.try_confirm_delivery(&recipient, &delivery_id);
+
+    let credited: Option<Address> = env.as_contract(&reputation_id, || {
+        env.storage().temporary().get(&Symbol::new(&env, "rep_inc"))
+    });
+    assert_eq!(credited, None);
 }
