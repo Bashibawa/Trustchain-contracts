@@ -16,6 +16,7 @@ export const EscrowErrorCodes = {
   InvalidDriver: 10,
   InvalidParties: 11,
   BatchTooLarge: 12,
+  InvalidSlippageTolerance: 13,
 } as const;
 
 export interface InitParams {
@@ -210,4 +211,20 @@ export interface SetHoldbackWindowParams {
   admin: string;
   /** New window in seconds, inclusive range [MIN_HOLDBACK_WINDOW_SECONDS, MAX_HOLDBACK_WINDOW_SECONDS]. */
   windowSeconds: bigint | number;
+}
+
+/**
+ * On-chain protocol/data version this SDK release targets. Mirrors
+ * `PROTOCOL_VERSION` in escrow_contract; compare against
+ * `EscrowClient.getProtocolVersion()` to detect an incompatible deployment.
+ */
+export const SUPPORTED_PROTOCOL_VERSION = 1;
+/** Largest accepted slippage tolerance (10%). Mirrors `MAX_SLIPPAGE_TOLERANCE_BPS`. */
+export const MAX_SLIPPAGE_TOLERANCE_BPS = 1000;
+
+export interface UpdateSlippageToleranceParams {
+  /** Must be the stored escrow admin; the call requires its auth. */
+  admin: string;
+  /** New tolerance in basis points, integer in the inclusive range [0, MAX_SLIPPAGE_TOLERANCE_BPS]. */
+  newSlippageBps: number;
 }

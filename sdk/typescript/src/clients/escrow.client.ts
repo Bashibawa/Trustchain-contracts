@@ -229,6 +229,41 @@ export class EscrowClient {
   }
 
   /**
+   * Read the on-chain protocol version (independent of the crate/SDK version).
+   * See `SUPPORTED_PROTOCOL_VERSION` for the version this SDK targets.
+   */
+  async getProtocolVersion(options?: ContractInvokeOptions): Promise<number> {
+    return Number(await this.invoker.call('get_protocol_version', [], options));
+  }
+
+  /**
+   * Read the protocol slippage tolerance in basis points.
+   */
+  async getSlippageTolerance(options?: ContractInvokeOptions): Promise<number> {
+    return Number(await this.invoker.call('get_slippage_tolerance', [], options));
+  }
+
+  /**
+   * Update the protocol slippage tolerance in basis points (admin only).
+   *
+   * Values outside [0, MAX_SLIPPAGE_TOLERANCE_BPS] or non-integers throw a
+   * `RangeError` locally; the contract reverts with `InvalidSlippageTolerance`
+   * for the same inputs and with `Unauthorized` for a non-admin caller.
+   */
+  async updateSlippageTolerance(
+    params: EscrowTypes.UpdateSlippageToleranceParams,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    const bps = params.newSlippageBps;
+    if (!Number.isInteger(bps) || bps < 0 || bps > EscrowTypes.MAX_SLIPPAGE_TOLERANCE_BPS) {
+      throw new RangeError(
+        `slippage tolerance must be an integer within [0, ${EscrowTypes.MAX_SLIPPAGE_TOLERANCE_BPS}] bps, got ${bps}`
+      );
+    }
+    await this.invoker.call('update_slippage_tolerance', [address(params.admin), u32(bps)], options);
+  }
+
+  /**
    * Set the holdback release delay in seconds (admin only).
    *
    * Out-of-range or non-integer values throw a `RangeError` locally; the

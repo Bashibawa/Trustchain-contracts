@@ -272,6 +272,20 @@ Read the configured volume thresholds and discounts.
 ##### `getSenderVolume(sender: string): Promise<number>`
 Read a sender's accumulated volume.
 
+##### `getProtocolVersion(): Promise<number>`
+Read the on-chain protocol version (`get_protocol_version`). This is independent
+of the package version; compare it with `SUPPORTED_PROTOCOL_VERSION` to detect a
+deployment this SDK does not target.
+
+##### `getSlippageTolerance(): Promise<number>`
+Read the protocol slippage tolerance in basis points.
+
+##### `updateSlippageTolerance(params: UpdateSlippageToleranceParams): Promise<void>`
+Update the slippage tolerance (admin only) via `update_slippage_tolerance`.
+`params.newSlippageBps` must be an integer in [0, `MAX_SLIPPAGE_TOLERANCE_BPS`
+(1000)]; other values throw a `RangeError` locally (the contract reverts with
+`InvalidSlippageTolerance`, `EscrowErrorCodes.InvalidSlippageTolerance = 13`).
+
 ##### `setHoldbackWindow(params: SetHoldbackWindowParams): Promise<void>`
 Set the holdback release delay in seconds (admin only) via `set_holdback_window`.
 `params.windowSeconds` must be an integer in the inclusive range
