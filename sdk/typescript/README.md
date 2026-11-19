@@ -329,6 +329,20 @@ synchronization check.
 
 #### Methods
 
+##### Reputation policy
+
+The contract applies a flat reputation adjustment to the driver for each
+verdict. All three controls are admin-only and accept an integer in
+`0..=MAX_DISPUTE_REPUTATION_ADJUSTMENT` (50, half the reputation scale); the
+client throws a `RangeError` for anything else before submitting, and the
+contract rejects it with `InvalidState`.
+
+| Verdict | Setter | Getter | Default |
+| --- | --- | --- | --- |
+| Refund sender | `setDisputeReputationPenalty({ caller, penalty })` | `getDisputeReputationPenalty()` | 10 |
+| Pay driver | `setDisputeReputationReward({ caller, reward })` | `getDisputeReputationReward()` | 5 |
+| Split funds | `setDisputeSplitPenalty({ caller, penalty })` | `getDisputeSplitPenalty()` | 5 |
+
 ##### `getDisputesPage(page: number, pageSize: number): Promise<bigint[]>`
 Read one page of the append-only dispute index (delivery IDs, ordered by raise
 time). The contract caps a page at 100 entries.

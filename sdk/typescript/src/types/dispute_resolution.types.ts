@@ -32,6 +32,25 @@ export interface SetDisputeReputationPenaltyParams {
   penalty: number;
 }
 
+/**
+ * Upper bound (inclusive) the contract accepts for every dispute reputation
+ * adjustment: the primary penalty, the pay-driver reward and the split
+ * penalty. Mirrors `MAX_DISPUTE_REPUTATION_PENALTY`
+ * (`IDENTITY_MAX_REPUTATION / 2`) in `dispute_resolution_contract/lib.rs`, so
+ * a single ruling can never move a driver's score by more than half the scale.
+ */
+export const MAX_DISPUTE_REPUTATION_ADJUSTMENT = 50;
+
+export interface SetDisputeReputationRewardParams {
+  caller: string;
+  reward: number;
+}
+
+export interface SetDisputeSplitPenaltyParams {
+  caller: string;
+  penalty: number;
+}
+
 export interface SetDisputeResolutionLimitParams {
   caller: string;
   newLimit: bigint;

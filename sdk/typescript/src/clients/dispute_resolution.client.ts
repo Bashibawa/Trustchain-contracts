@@ -71,11 +71,48 @@ export class DisputeResolutionClient {
     params: DisputeResolutionTypes.SetDisputeReputationPenaltyParams,
     options?: ContractInvokeOptions
   ): Promise<void> {
+    assertReputationAdjustment('penalty', params.penalty);
     await this.invoker.call('set_dispute_reputation_penalty', [address(params.caller), u32(params.penalty)], options);
   }
 
   async getDisputeReputationPenalty(options?: ContractInvokeOptions): Promise<number> {
     return Number(await this.invoker.call('get_dispute_reputation_penalty', [], options));
+  }
+
+  /**
+   * Set the reputation credit awarded to the driver when a dispute resolves
+   * in their favour (`resolveDisputePayDriver`). Admin only. Values outside
+   * `0..=MAX_DISPUTE_REPUTATION_ADJUSTMENT` are rejected before submission;
+   * the contract enforces the same bound with `InvalidState`.
+   */
+  async setDisputeReputationReward(
+    params: DisputeResolutionTypes.SetDisputeReputationRewardParams,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    assertReputationAdjustment('reward', params.reward);
+    await this.invoker.call('set_dispute_reputation_reward', [address(params.caller), u32(params.reward)], options);
+  }
+
+  async getDisputeReputationReward(options?: ContractInvokeOptions): Promise<number> {
+    return Number(await this.invoker.call('get_dispute_reputation_reward', [], options));
+  }
+
+  /**
+   * Set the reputation penalty applied to the driver when a dispute is split
+   * (`resolveDisputeSplitFunds`). Admin only. Values outside
+   * `0..=MAX_DISPUTE_REPUTATION_ADJUSTMENT` are rejected before submission;
+   * the contract enforces the same bound with `InvalidState`.
+   */
+  async setDisputeSplitPenalty(
+    params: DisputeResolutionTypes.SetDisputeSplitPenaltyParams,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    assertReputationAdjustment('split penalty', params.penalty);
+    await this.invoker.call('set_dispute_split_penalty', [address(params.caller), u32(params.penalty)], options);
+  }
+
+  async getDisputeSplitPenalty(options?: ContractInvokeOptions): Promise<number> {
+    return Number(await this.invoker.call('get_dispute_split_penalty', [], options));
   }
 
   async getDisputeResolutionLimit(options?: ContractInvokeOptions): Promise<bigint> {
@@ -163,6 +200,18 @@ export class DisputeResolutionClient {
       throw new TypeError(`Invalid u32 dispute count returned by contract: ${count}`);
     }
     return count;
+  }
+}
+
+function assertReputationAdjustment(name: string, value: number): void {
+  if (
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > DisputeResolutionTypes.MAX_DISPUTE_REPUTATION_ADJUSTMENT
+  ) {
+    throw new RangeError(
+      `Dispute reputation ${name} must be an integer in 0..=${DisputeResolutionTypes.MAX_DISPUTE_REPUTATION_ADJUSTMENT}, received ${value}`
+    );
   }
 }
 
