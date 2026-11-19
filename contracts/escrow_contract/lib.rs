@@ -240,12 +240,23 @@ fn get_holdback_window(env: &Env) -> u64 {
 }
 
 /// Return the configured delivery contract address, if any.
-/// Used by `create_escrow` / `create_escrows_batch` to optionally verify that
-/// a delivery record exists and matches the supplied parties (Issue #295).
+/// Used by `create_escrow` / `create_escrows_batch` to verify that a delivery
+/// record exists and matches the supplied parties (Issue #295).
 fn get_delivery_contract(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::DeliveryContract)
 }
 
+/// Whether the admin has explicitly opted this deployment into standalone
+/// mode (escrows not backed by a delivery contract). Defaults to `false`.
+fn is_standalone_mode(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get(&DataKey::StandaloneMode)
+        .unwrap_or(false)
+}
+
+/// Verify an escrow against its delivery record before any funds move.
+///
 /// When the delivery contract is configured, cross-call it to verify that:
 /// 1. The delivery exists (panics with DeliveryNotFound if not).
 /// 2. The escrow `sender` matches the delivery record's sender. Without this a
@@ -258,18 +269,20 @@ fn get_delivery_contract(env: &Env) -> Option<Address> {
 ///    documented: escrow creation may precede or follow driver assignment, but
 ///    if a driver is already assigned its address must agree with the escrow).
 ///
-/// When no delivery contract is configured the check is skipped entirely so
-/// existing deployments and tests that don't wire up the delivery contract
-/// continue to work unchanged — matching the optional integration pattern used
-/// by the fleet-management and settlement integrations.
+/// When no delivery contract is configured the call **fails closed** with
+/// `EscrowError::DeliveryContractNotConfigured`, unless the admin has
+/// explicitly enabled standalone mode (`set_standalone_mode`). Previously an
+/// absent delivery contract silently skipped verification, so a partially
+/// configured deployment (e.g. delivery contract still pending its timelock)
+/// admitted orphaned or mismatched escrows despite the delivery-based
+/// lifecycle assumptions elsewhere. Standalone mode can only be enabled while
+/// no delivery contract is active, and confirming one turns it off.
 ///
 /// Cross-contract call cost note: this adds one `get_delivery` call to the hot
 /// escrow-creation path. The integrity benefit — preventing orphaned escrows
 /// and mismatched-party escrows that permanently consume a delivery_id — is
-/// judged to outweigh the ~1 instruction overhead for deployments that enable
-/// the check. Deployments that cannot afford the cost simply leave the delivery
-/// contract unconfigured (Issue #295).
-fn verify_delivery_if_configured(
+/// judged to outweigh the cost (Issue #295).
+fn verify_delivery(
     env: &Env,
     delivery_id: u64,
     sender: &Address,
@@ -278,7 +291,8 @@ fn verify_delivery_if_configured(
 ) {
     let delivery_addr = match get_delivery_contract(env) {
         Some(addr) => addr,
-        None => return,
+        None if is_standalone_mode(env) => return,
+        None => panic_with_error!(env, EscrowError::DeliveryContractNotConfigured),
     };
 
     let delivery: DeliveryRecord = env.invoke_contract(
@@ -329,9 +343,9 @@ fn get_fleet_management_contract(env: &Env) -> Option<Address> {
 /// configured `delivery_contract`, or a protocol admin, who keeps a recovery
 /// path for escrows that would otherwise be stuck.
 ///
-/// Following the optional-integration pattern already used by
-/// `verify_delivery_if_configured` (Issue #295), an unconfigured deployment
-/// falls back to the legacy `record.recipient` rule. Without a delivery
+/// An unconfigured deployment (only reachable for escrows created in explicit
+/// standalone mode, see `set_standalone_mode`) falls back to the legacy
+/// `record.recipient` rule. Without a delivery
 /// contract there is no confirmation state machine for a recipient to strand,
 /// so the bypass has nothing to strand; deployments that do run the delivery
 /// lifecycle are protected as soon as they call `set_delivery_contract`.
@@ -620,13 +634,17 @@ enum DataKey {
     FleetManagementContract,
     DisputeResolutionContract,
     IdentityReputationContract,
-    /// Optional delivery_contract address used by create_escrow /
-    /// create_escrows_batch to cross-verify that a delivery record exists and
-    /// that recipient / driver match before locking funds (Issue #295).
-    /// When absent the check is skipped so existing deployments and tests that
-    /// do not wire up the delivery contract continue to work unchanged.
+    /// delivery_contract address used by create_escrow / create_escrows_batch
+    /// to cross-verify that a delivery record exists and that sender /
+    /// recipient / driver match before locking funds (Issue #295). When absent,
+    /// escrow creation fails closed unless `StandaloneMode` is enabled.
     DeliveryContract,
     PendingDeliveryContract,
+    /// Explicit admin opt-in to run without a delivery contract. Absent means
+    /// `false`: escrow creation fails closed until a delivery contract is
+    /// confirmed or this is enabled. Cleared when a delivery contract is
+    /// confirmed and cannot be re-enabled while one is active.
+    StandaloneMode,
     /// Track total locked value per token
     TotalLocked(Address),
     /// Track sender volume (number of completed deliveries)
@@ -687,6 +705,9 @@ pub enum EscrowError {
     ContractChangeTimelockNotElapsed = 15,
     /// A configuration value is outside its permitted range.
     InvalidState = 16,
+    /// Escrow creation was attempted with no active delivery contract while
+    /// standalone mode is disabled.
+    DeliveryContractNotConfigured = 17,
 }
 
 #[contracttype]
@@ -1045,11 +1066,9 @@ impl EscrowContract {
     /// `create_escrows_batch` to cross-verify that a delivery record exists and
     /// that the supplied recipient/driver match before locking funds (Issue #295).
     ///
-    /// The check is **optional**: when no delivery contract is configured the
-    /// verification is skipped entirely, so existing deployments and tests that
-    /// do not wire up the delivery contract continue to work unchanged — matching
-    /// the optional integration pattern used by the fleet-management and
-    /// settlement integrations.
+    /// Until a delivery contract is confirmed, escrow creation fails closed
+    /// with `DeliveryContractNotConfigured` unless the admin explicitly enabled
+    /// standalone mode via `set_standalone_mode`.
     ///
     /// Only an admin may propose this change. It takes effect after a
     /// three-day review period and separate confirmation.
@@ -1091,6 +1110,9 @@ impl EscrowContract {
         env.storage()
             .instance()
             .remove(&DataKey::PendingDeliveryContract);
+        // Activation is one-way: once delivery verification is live the
+        // deployment can no longer run in standalone mode.
+        env.storage().instance().remove(&DataKey::StandaloneMode);
         extend_instance_ttl(&env);
         env.events().publish(
             (Symbol::new(&env, "delivery_contract_updated"),),
@@ -1104,10 +1126,40 @@ impl EscrowContract {
             .get(&DataKey::PendingDeliveryContract)
     }
 
-    /// Return the configured delivery contract address, if any.
-    /// `None` means delivery verification is disabled (see `set_delivery_contract`).
+    /// Return the configured delivery contract address, if any. `None` means
+    /// escrow creation fails closed unless standalone mode is enabled.
     pub fn get_delivery_contract(env: Env) -> Option<Address> {
         get_delivery_contract(&env)
+    }
+
+    /// Explicitly opt this deployment in or out of standalone mode, in which
+    /// escrows are created without a backing delivery contract.
+    ///
+    /// Standalone mode is off by default, so a deployment that has not wired
+    /// a delivery contract rejects escrow creation instead of silently
+    /// skipping delivery verification. It may only be *enabled* while no
+    /// delivery contract is active: once one is confirmed (which also clears
+    /// this flag) the deployment fails closed permanently. Disabling is
+    /// always allowed.
+    #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
+    pub fn set_standalone_mode(env: Env, admin: Address, enabled: bool) {
+        admin.require_auth();
+        require_admin(&env, &admin);
+        if enabled && get_delivery_contract(&env).is_some() {
+            panic_with_error!(&env, TrustchainError::InvalidState);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::StandaloneMode, &enabled);
+        extend_instance_ttl(&env);
+        env.events().publish(
+            (Symbol::new(&env, "standalone_mode_set"),),
+            (admin, enabled),
+        );
+    }
+
+    pub fn is_standalone_mode(env: Env) -> bool {
+        is_standalone_mode(&env)
     }
 
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
@@ -1234,11 +1286,11 @@ impl EscrowContract {
             panic_with_error!(&env, EscrowError::InvalidToken);
         }
         validate_token_contract(&env, &token);
-        // Issue #295: when a delivery contract is configured, cross-call it to
-        // confirm the delivery exists and that the supplied sender, recipient
-        // and driver match the delivery record. Skipped when unconfigured so existing
-        // deployments and tests continue to work unchanged.
-        verify_delivery_if_configured(&env, delivery_id, &sender, &recipient, &driver);
+        // Issue #295: cross-call the delivery contract to confirm the delivery
+        // exists and that the supplied sender, recipient and driver match the
+        // delivery record. Fails closed when no delivery contract is active
+        // unless standalone mode was explicitly enabled.
+        verify_delivery(&env, delivery_id, &sender, &recipient, &driver);
         let payout_address: Option<Address> = if let (Some(fleet_addr), Some(fid)) =
             (get_fleet_management_contract(&env), fleet_id)
         {
@@ -1410,9 +1462,9 @@ impl EscrowContract {
                 if env.storage().persistent().has(&escrow_key(delivery_id)) {
                     panic_with_error!(&env, TrustchainError::DuplicateDelivery);
                 }
-                // Issue #295: same optional delivery-verification check as
-                // create_escrow — skipped when no delivery contract is configured.
-                verify_delivery_if_configured(&env, delivery_id, &sender, &recipient, &driver);
+                // Issue #295: same delivery-verification check as create_escrow,
+                // including the fail-closed rule when no delivery contract is set.
+                verify_delivery(&env, delivery_id, &sender, &recipient, &driver);
 
                 // Issue #378: snapshot the fleet payout address at creation time,
                 // mirroring create_escrow. Without this, batch-created escrows
