@@ -319,6 +319,37 @@ Confirm that a delivery has been completed.
 Get a delivery record.
 
 ##### `getDriverProfile(driver: string): Promise<DeliveryDriverProfile>`
-Get the dri
+Get the driver's identity and reputation profile through the delivery contract.
 
-/* … truncated 1736 chars — edit only what you need near the top … */
+##### `getCombinedState(deliveryId: bigint): Promise<CombinedDeliveryState>`
+Get a delivery record and its optional escrow record, together with the contract's
+synchronization check.
+
+## Transaction preparation
+
+`ContractInvokeOptions` supports bounded polling for submitted transactions:
+`pollingIntervalMs` defaults to 1,000 ms, `pollingMaxIntervalMs` to 10,000 ms,
+and `pollingTimeoutMs` to 300,000 ms. Poll delays grow exponentially up to the
+configured maximum. An `AbortSignal` may be passed as `signal` to stop waiting.
+The existing `timeout` option configures the RPC request timeout.
+
+For signed contract calls, transaction simulation inspects persistent contract
+storage and contract-code entries in the transaction footprint. Entries with
+at most `ttlThresholdLedgers` remaining (default 100,000) are extended in a
+separate transaction to at least `ttlExtendToLedgers` (default 518,400) before
+the invocation is submitted. Both values are configurable; the extension target
+must be greater than the threshold.
+
+## Testing
+
+```bash
+npm run test
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](../../CONTRIBUTING.md) for contribution guidelines.
+
+## License
+
+MIT
