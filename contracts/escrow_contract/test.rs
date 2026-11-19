@@ -7544,3 +7544,148 @@ fn test_create_escrows_batch_rejects_foreign_sender_atomically() {
     );
     assert_eq!(w.client.get_escrow(&u64::from(own)).sender, sender);
 }
+
+// ── Payout snapshot lifetime ─────────────────────────────────────────────────
+
+fn set_mock_fleet_treasury(env: &Env, fleet_contract: &Address, treasury: &Address) {
+    env.as_contract(fleet_contract, || {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(env, "treasury"), treasury);
+    });
+}
+
+/// Remaining TTL of (escrow record, payout snapshot) for `delivery_id`.
+fn escrow_and_snapshot_ttl(env: &Env, contract_id: &Address, delivery_id: u64) -> (u32, u32) {
+    env.as_contract(contract_id, || {
+        (
+            env.storage().persistent().get_ttl(&escrow_key(delivery_id)),
+            env.storage()
+                .persistent()
+                .get_ttl(&DataKey::EscrowPayoutAddress(delivery_id)),
+        )
+    })
+}
+
+/// Move far enough forward that a renewed entry has dropped below the renewal
+/// threshold, so the next touch must extend it again.
+fn advance_past_renewal_threshold(env: &Env) {
+    env.ledger().with_mut(|l| {
+        l.sequence_number += ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 10;
+    });
+}
+
+/// A long-lived escrow keeps its funding-time payout route: every time the
+/// escrow record is renewed the snapshot is renewed with it, so after living
+/// well past a single TTL window the payout still goes to the treasury that
+/// was active at funding, not to the fleet's current treasury.
+#[test]
+fn test_payout_snapshot_lives_as_long_as_escrow() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let funding_treasury = Address::generate(&env);
+    let later_treasury = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+    let fleet_contract = env.register(MockFleetManagementContract, ());
+    set_mock_fleet_treasury(&env, &fleet_contract, &funding_treasury);
+
+    client.init(&admin, &token, &0);
+    client.set_fleet_management_contract(&admin, &fleet_contract);
+    mint(&env, &token, &sender, 1000);
+    client.create_escrow(
+        &sender,
+        &recipient,
+        &driver,
+        &20001u64,
+        &token,
+        &1000,
+        &Some(7u64),
+    );
+    let (record_ttl, snapshot_ttl) = escrow_and_snapshot_ttl(&env, &contract_id, 20001);
+    assert_eq!(record_ttl, snapshot_ttl);
+
+    // First touch after the threshold: both entries are renewed together.
+    advance_past_renewal_threshold(&env);
+    client.admin_freeze_funds(&admin, &20001u64);
+    let (record_ttl, snapshot_ttl) = escrow_and_snapshot_ttl(&env, &contract_id, 20001);
+    assert_eq!(record_ttl, ttl::LEDGER_TTL_EXTEND_TO);
+    assert_eq!(snapshot_ttl, record_ttl);
+
+    // Live well past the snapshot's original expiry ledger.
+    advance_past_renewal_threshold(&env);
+    let (record_ttl, snapshot_ttl) = escrow_and_snapshot_ttl(&env, &contract_id, 20001);
+    assert_eq!(snapshot_ttl, record_ttl);
+
+    // The fleet's live route changes; settlement must ignore it.
+    set_mock_fleet_treasury(&env, &fleet_contract, &later_treasury);
+    client.resolve_dispute(&admin, &20001u64, &true);
+
+    assert_eq!(balance(&env, &token, &funding_treasury), 1000);
+    assert_eq!(balance(&env, &token, &later_treasury), 0);
+    assert_eq!(balance(&env, &token, &driver), 0);
+}
+
+/// Batch-created escrows get the same snapshot lifetime guarantee.
+#[test]
+fn test_batch_payout_snapshot_renewed_with_escrow() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+    let fleet_contract = env.register(MockFleetManagementContract, ());
+    set_mock_fleet_treasury(&env, &fleet_contract, &treasury);
+
+    client.init(&admin, &token, &0);
+    client.set_fleet_management_contract(&admin, &fleet_contract);
+    mint(&env, &token, &sender, 1000);
+    let mut batch = soroban_sdk::Vec::new(&env);
+    batch.push_back((20002u64, driver.clone(), 1000i128, Some(7u64)));
+    client.create_escrows_batch(&sender, &recipient, &token, &batch);
+
+    advance_past_renewal_threshold(&env);
+    client.admin_freeze_funds(&admin, &20002u64);
+    let (record_ttl, snapshot_ttl) = escrow_and_snapshot_ttl(&env, &contract_id, 20002);
+    assert_eq!(record_ttl, ttl::LEDGER_TTL_EXTEND_TO);
+    assert_eq!(snapshot_ttl, record_ttl);
+}
+
+/// Escrows without a fleet have no snapshot; renewing them must not touch
+/// (or require) a snapshot entry.
+#[test]
+fn test_escrow_without_snapshot_renews_cleanly() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 1000);
+    client.create_escrow(
+        &sender, &recipient, &driver, &20003u64, &token, &1000, &None,
+    );
+    advance_past_renewal_threshold(&env);
+    client.admin_freeze_funds(&admin, &20003u64);
+
+    let has_snapshot = env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .has(&DataKey::EscrowPayoutAddress(20003))
+    });
+    assert!(!has_snapshot);
+    client.resolve_dispute(&admin, &20003u64, &true);
+    assert_eq!(balance(&env, &token, &driver), 1000);
+}

@@ -459,9 +459,7 @@ fn settle_escrow_funds(
         driver_amount,
         fleet_management_addr.as_ref(),
         record.fleet_id,
-        env.storage()
-            .persistent()
-            .get(&DataKey::EscrowPayoutAddress(delivery_id)),
+        load_payout_snapshot(env, delivery_id),
     );
 
     if platform_fee > 0 {
@@ -548,6 +546,7 @@ fn save_escrow(env: &Env, delivery_id: u64, record: &EscrowRecord) {
         ttl::LEDGER_TTL_THRESHOLD,
         ttl::LEDGER_TTL_EXTEND_TO,
     );
+    extend_payout_snapshot_ttl(env, delivery_id);
 }
 
 fn load_escrow(env: &Env, delivery_id: u64) -> EscrowRecord {
@@ -562,7 +561,49 @@ fn load_escrow(env: &Env, delivery_id: u64) -> EscrowRecord {
         ttl::LEDGER_TTL_THRESHOLD,
         ttl::LEDGER_TTL_EXTEND_TO,
     );
+    extend_payout_snapshot_ttl(env, delivery_id);
     record
+}
+
+/// Persist the funding-time fleet payout route for an escrow.
+///
+/// The snapshot lives under its own persistent key
+/// (`DataKey::EscrowPayoutAddress`), so it has its own TTL. It must be written
+/// before `save_escrow` or renewed alongside it so the two never drift apart.
+fn save_payout_snapshot(env: &Env, delivery_id: u64, payout_address: &Address) {
+    let key = DataKey::EscrowPayoutAddress(delivery_id);
+    env.storage().persistent().set(&key, payout_address);
+    env.storage().persistent().extend_ttl(
+        &key,
+        ttl::LEDGER_TTL_THRESHOLD,
+        ttl::LEDGER_TTL_EXTEND_TO,
+    );
+}
+
+fn load_payout_snapshot(env: &Env, delivery_id: u64) -> Option<Address> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::EscrowPayoutAddress(delivery_id))
+}
+
+/// Keep the payout snapshot alive exactly as long as its escrow record.
+///
+/// Invariant: whenever an escrow record's TTL is renewed (every
+/// `save_escrow` / `load_escrow`), its payout snapshot — if one was taken —
+/// is renewed with the same threshold and target. Previously only the record
+/// was renewed, so on a long-lived escrow the snapshot could be archived
+/// first; `payout_driver` would then see `None` and silently fall back to
+/// resolving the route from *live* fleet state instead of the route committed
+/// at funding time.
+fn extend_payout_snapshot_ttl(env: &Env, delivery_id: u64) {
+    let key = DataKey::EscrowPayoutAddress(delivery_id);
+    if env.storage().persistent().has(&key) {
+        env.storage().persistent().extend_ttl(
+            &key,
+            ttl::LEDGER_TTL_THRESHOLD,
+            ttl::LEDGER_TTL_EXTEND_TO,
+        );
+    }
 }
 
 #[contracttype]
@@ -1213,6 +1254,11 @@ impl EscrowContract {
         let record_token_clone = token.clone();
         let created_at = env.ledger().timestamp();
         let expires_at = created_at.saturating_add(constants::DEFAULT_ESCROW_EXPIRY_SECONDS);
+        // Write the snapshot before the record so `save_escrow` renews both
+        // with the same TTL from the first ledger onwards.
+        if let Some(payout_address) = payout_address {
+            save_payout_snapshot(&env, delivery_id, &payout_address);
+        }
         save_escrow(
             &env,
             delivery_id,
@@ -1232,16 +1278,6 @@ impl EscrowContract {
                 fleet_id,
             },
         );
-        if let Some(payout_address) = payout_address {
-            let payout_key = DataKey::EscrowPayoutAddress(delivery_id);
-            env.storage().persistent().set(&payout_key, &payout_address);
-            env.storage().persistent().extend_ttl(
-                &payout_key,
-                ttl::LEDGER_TTL_THRESHOLD,
-                ttl::LEDGER_TTL_EXTEND_TO,
-            );
-        }
-
         index_push(&env, &sender, 0, delivery_id);
         index_push(&env, &recipient, 1, delivery_id);
         index_push(&env, &driver, 2, delivery_id);
@@ -1410,6 +1446,12 @@ impl EscrowContract {
                 let created_at = env.ledger().timestamp();
                 let expires_at =
                     created_at.saturating_add(constants::DEFAULT_ESCROW_EXPIRY_SECONDS);
+                // Persist the snapshotted payout address so settle_escrow_funds
+                // uses it instead of resolving live at settlement time. Written
+                // before the record so `save_escrow` renews both together.
+                if let Some(addr) = payout_address {
+                    save_payout_snapshot(&env, delivery_id, &addr);
+                }
                 save_escrow(
                     &env,
                     delivery_id,
@@ -1430,17 +1472,6 @@ impl EscrowContract {
                     },
                 );
 
-                // Persist the snapshotted payout address so settle_escrow_funds
-                // uses it instead of resolving live at settlement time.
-                if let Some(addr) = payout_address {
-                    let payout_key = DataKey::EscrowPayoutAddress(delivery_id);
-                    env.storage().persistent().set(&payout_key, &addr);
-                    env.storage().persistent().extend_ttl(
-                        &payout_key,
-                        ttl::LEDGER_TTL_THRESHOLD,
-                        ttl::LEDGER_TTL_EXTEND_TO,
-                    );
-                }
                 /*
                 sender_escrows.push_back(delivery_id);
                 recipient_escrows.push_back(delivery_id);
@@ -2011,9 +2042,7 @@ impl EscrowContract {
                 net_driver_amount,
                 fleet_management.as_ref(),
                 record.fleet_id,
-                env.storage()
-                    .persistent()
-                    .get(&DataKey::EscrowPayoutAddress(delivery_id)),
+                load_payout_snapshot(&env, delivery_id),
             );
         }
         if platform_fee > 0 {
