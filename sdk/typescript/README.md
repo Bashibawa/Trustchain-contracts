@@ -325,6 +325,27 @@ Get the driver's identity and reputation profile through the delivery contract.
 Get a delivery record and its optional escrow record, together with the contract's
 synchronization check.
 
+### DisputeResolutionClient
+
+#### Methods
+
+##### `getDisputesPage(page: number, pageSize: number): Promise<bigint[]>`
+Read one page of the append-only dispute index (delivery IDs, ordered by raise
+time). The contract caps a page at 100 entries.
+
+##### `getDisputeCount(): Promise<number>`
+Total number of disputes ever recorded. This is the exact length of the index
+walked by `getDisputesPage`, so pagination is complete after
+`Math.ceil(count / pageSize)` pages:
+
+```typescript
+const count = await disputeClient.getDisputeCount();
+for (let page = 0; page * pageSize < count; page += 1) {
+  const ids = await disputeClient.getDisputesPage(page, pageSize);
+  // ...
+}
+```
+
 ## Transaction preparation
 
 `ContractInvokeOptions` supports bounded polling for submitted transactions:

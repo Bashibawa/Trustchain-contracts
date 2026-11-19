@@ -148,6 +148,22 @@ export class DisputeResolutionClient {
     const result = await this.invoker.call('get_disputes_page', [u32(offset), u32(pageSize)], options);
     return (result as unknown[]).map((deliveryId) => BigInt(String(deliveryId)));
   }
+
+  /**
+   * Total number of disputes ever recorded in the append-only dispute index.
+   *
+   * The count is monotonically increasing and is the exact length of the
+   * index that `getDisputesPage` walks, so a caller has read every dispute
+   * once it has fetched `Math.ceil(count / pageSize)` pages. No authorization
+   * is required.
+   */
+  async getDisputeCount(options?: ContractInvokeOptions): Promise<number> {
+    const count = Number(await this.invoker.call('get_dispute_count', [], options));
+    if (!Number.isInteger(count) || count < 0 || count > 0xffffffff) {
+      throw new TypeError(`Invalid u32 dispute count returned by contract: ${count}`);
+    }
+    return count;
+  }
 }
 
 /**
