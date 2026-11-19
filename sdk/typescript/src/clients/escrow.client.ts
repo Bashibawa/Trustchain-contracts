@@ -349,6 +349,57 @@ export class EscrowClient {
   }
 
   /**
+   * Get the active delivery peer contract address. `null` means delivery
+   * verification is disabled.
+   */
+  async getDeliveryContract(options?: ContractInvokeOptions): Promise<string | null> {
+    return decodeOptionalAddress(await this.invoker.call('get_delivery_contract', [], options));
+  }
+
+  /**
+   * Get the in-flight delivery contract rotation, or `null` when none is pending.
+   */
+  async getPendingDeliveryContract(
+    options?: ContractInvokeOptions
+  ): Promise<EscrowTypes.PendingDeliveryContractInfo | null> {
+    const raw = await this.invoker.call('get_pending_delivery_contract', [], options);
+    if (raw === null || raw === undefined) return null;
+    const record = raw as Record<string, unknown>;
+    return {
+      deliveryContract: String(record.address),
+      proposedBy: String(record.proposed_by),
+      activatesAt: BigInt(String(record.activates_at)),
+    };
+  }
+
+  /**
+   * Propose rotating the delivery peer contract (admin only).
+   *
+   * The change does not take effect immediately: it is stored as pending and
+   * only becomes active after the peer-contract timelock elapses and
+   * {@link EscrowClient.confirmDeliveryContract} is called. A new proposal
+   * replaces any existing pending one and restarts the timelock.
+   */
+  async proposeDeliveryContract(
+    params: EscrowTypes.ProposeDeliveryContractParams,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    await this.invoker.call('set_delivery_contract', [address(params.admin), address(params.deliveryContract)], options);
+  }
+
+  /**
+   * Activate the pending delivery contract rotation.
+   *
+   * Permissionless once the timelock has elapsed. The contract rejects the call
+   * with `NoPendingContractChange` when nothing is pending, and with
+   * `ContractChangeTimelockNotElapsed` before `activatesAt`; in both cases the
+   * active delivery contract is left unchanged.
+   */
+  async confirmDeliveryContract(options?: ContractInvokeOptions): Promise<void> {
+    await this.invoker.call('confirm_delivery_contract', [], options);
+  }
+
+  /**
    * Get the fleet management contract address
    */
   async getFleetManagementContract(options?: ContractInvokeOptions): Promise<string | null> {

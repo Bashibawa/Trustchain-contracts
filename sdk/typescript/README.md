@@ -272,6 +272,27 @@ Read the configured volume thresholds and discounts.
 ##### `getSenderVolume(sender: string): Promise<number>`
 Read a sender's accumulated volume.
 
+#### Delivery peer rotation
+
+The delivery peer contract is rotated in two steps so a compromised admin key
+cannot silently redirect delivery verification:
+
+##### `proposeDeliveryContract(params: ProposeDeliveryContractParams): Promise<void>`
+Admin only. Stores `params.deliveryContract` as pending; it activates after
+the peer-contract timelock. A new proposal replaces the pending one.
+
+##### `confirmDeliveryContract(): Promise<void>`
+Permissionless. Activates the pending address once `activatesAt` has passed.
+Rejects with `NoPendingContractChange` or `ContractChangeTimelockNotElapsed`
+and leaves the active address unchanged.
+
+##### `getDeliveryContract(): Promise<string | null>`
+The active delivery contract; `null` means verification is disabled.
+
+##### `getPendingDeliveryContract(): Promise<PendingDeliveryContractInfo | null>`
+The in-flight rotation (`deliveryContract`, `proposedBy`, `activatesAt`) or
+`null`.
+
 ### DeliveryClient
 
 #### Methods

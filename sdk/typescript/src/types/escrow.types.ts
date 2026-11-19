@@ -157,6 +157,30 @@ export interface ConfirmSettlementContractParams {
   admin: string;
 }
 
+/**
+ * Parameters for `set_delivery_contract`: proposes a timelocked rotation of
+ * the delivery peer contract. Admin only.
+ */
+export interface ProposeDeliveryContractParams {
+  /** Current escrow admin authorising the proposal. */
+  admin: string;
+  /** Proposed delivery contract address. */
+  deliveryContract: string;
+}
+
+/**
+ * Mirrors the Rust `PendingPeerContractChange` struct returned by
+ * `get_pending_delivery_contract`. `null` means no rotation is pending.
+ */
+export interface PendingDeliveryContractInfo {
+  /** The proposed delivery contract address. */
+  deliveryContract: string;
+  /** Admin that proposed the change. */
+  proposedBy: string;
+  /** Unix timestamp (seconds) after which the change may be confirmed. */
+  activatesAt: bigint;
+}
+
 export interface SetFleetManagementContractParams {
   admin: string;
   fleetContract: string;
