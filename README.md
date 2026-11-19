@@ -416,3 +416,6 @@ Built with ❤️ by the Trustchain Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-71 -->
 - #71: Reject invalid index kinds in escrow pagination
+
+<!-- handsoff-issue-72 -->
+- #72: Prevent archived page gaps from silently shortening listings
