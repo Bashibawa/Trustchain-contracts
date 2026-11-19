@@ -3,7 +3,7 @@
 use shared_types::{
     events, ttl, DeliveryId, DeliveryStatus, DisputeRaisedEvent, DisputeResolvedPayoutEvent,
     DisputeResolvedRefundEvent, DisputeResolvedSplitEvent, EscrowRecord, EscrowStatus,
-    TrustchainError, PendingPeerContractChange,
+    TrustchainError, PendingPeerContractChange, HIGH_VALUE_DISPUTE_THRESHOLD,
 };
 use soroban_sdk::{
     contract, contractimpl, contracttype, panic_with_error, Address, BytesN, Env, IntoVal, Symbol,
@@ -551,7 +551,7 @@ impl DisputeResolutionContract {
         // #382 precedent: emit an event so off-chain indexers can track when
         // this contract pointer is proposed by an admin.
         env.events().publish(
-            (Symbol::new(&env, "delivery_contract_change_proposed"),),
+            (Symbol::new(&env, "delivery_contract_proposed"),),
             (caller, delivery_contract, activates_at),
         );
     }
