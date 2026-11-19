@@ -416,3 +416,6 @@ Built with ❤️ by the Trustchain Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-68 -->
 - #68: Keep reputation award from blocking fund-safe delivery confirmation
+
+<!-- handsoff-issue-69 -->
+- #69: Bound dispute evidence storage growth by encoded size
