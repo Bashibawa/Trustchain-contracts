@@ -517,21 +517,48 @@ fn settle_holdback_escrow(env: &Env, delivery_id: u64, mut record: EscrowRecord)
     record.status = EscrowStatus::Released;
     save_escrow(env, delivery_id, &record);
 
-    let total_locked_key = DataKey::TotalLocked(record.token.clone());
-    let current_total: i128 = env
-        .storage()
-        .persistent()
-        .get(&total_locked_key)
-        .unwrap_or(0);
-    env.storage().persistent().set(
-        &total_locked_key,
-        &current_total.saturating_sub(record.amount),
-    );
+    let total_locked_token = record.token.clone();
+    let current_total = read_total_locked(env, &total_locked_token);
+    write_total_locked(env, &total_locked_token, current_total.saturating_sub(record.amount));
 
     let fleet_management = get_fleet_management_contract(env);
     settle_escrow_funds(env, delivery_id, &record, fleet_management, driver_amount, platform_fee);
 
     (driver_amount, platform_fee)
+}
+
+/// Read the `TotalLocked` liability counter for `token`, renewing its TTL.
+///
+/// `TotalLocked` is the only thing standing between live escrow funds and
+/// `sweep_untracked_balance`: the sweep treats `balance - TotalLocked` as
+/// untracked. If the counter expired, live escrows would look like stray
+/// tokens and become sweepable. Every read and write therefore extends the
+/// entry to the same horizon as the escrow records it accounts for.
+fn read_total_locked(env: &Env, token: &Address) -> i128 {
+    let key = DataKey::TotalLocked(token.clone());
+    match env.storage().persistent().get::<_, i128>(&key) {
+        Some(total) => {
+            env.storage().persistent().extend_ttl(
+                &key,
+                ttl::LEDGER_TTL_THRESHOLD,
+                ttl::LEDGER_TTL_EXTEND_TO,
+            );
+            total
+        }
+        None => 0,
+    }
+}
+
+/// Write the `TotalLocked` counter for `token` and extend its TTL in the same
+/// step, so the counter never outlives less than the escrows it tracks.
+fn write_total_locked(env: &Env, token: &Address, total: i128) {
+    let key = DataKey::TotalLocked(token.clone());
+    env.storage().persistent().set(&key, &total);
+    env.storage().persistent().extend_ttl(
+        &key,
+        ttl::LEDGER_TTL_THRESHOLD,
+        ttl::LEDGER_TTL_EXTEND_TO,
+    );
 }
 
 fn save_escrow(env: &Env, delivery_id: u64, record: &EscrowRecord) {
@@ -1280,15 +1307,9 @@ impl EscrowContract {
         */
 
         let token_for_tracking = record_token_clone.clone();
-        let total_locked_key = DataKey::TotalLocked(token_for_tracking.clone());
-        let current_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&total_locked_key)
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&total_locked_key, &current_total.saturating_add(amount));
+        let total_locked_token = token_for_tracking.clone();
+        let current_total = read_total_locked(&env, &total_locked_token);
+        write_total_locked(&env, &total_locked_token, current_total.saturating_add(amount));
 
         env.events().publish(
             (events::escrow_funded(&env),),
@@ -1501,16 +1522,9 @@ impl EscrowContract {
         // the batch funds as untracked surplus and drain them. A batch shares
         // one token, so accumulate in the loop and do a single read-modify-
         // write here instead of one storage round-trip per element.
-        let total_locked_key = DataKey::TotalLocked(token.clone());
-        let current_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&total_locked_key)
-            .unwrap_or(0);
-        env.storage().persistent().set(
-            &total_locked_key,
-            &current_total.saturating_add(batch_total),
-        );
+        let total_locked_token = token.clone();
+        let current_total = read_total_locked(&env, &total_locked_token);
+        write_total_locked(&env, &total_locked_token, current_total.saturating_add(batch_total));
 
         count
     }
@@ -1591,16 +1605,9 @@ impl EscrowContract {
         record.status = EscrowStatus::Released;
         save_escrow(&env, delivery_id, &record);
 
-        let total_locked_key = DataKey::TotalLocked(record.token.clone());
-        let current_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&total_locked_key)
-            .unwrap_or(0);
-        env.storage().persistent().set(
-            &total_locked_key,
-            &current_total.saturating_sub(record.amount),
-        );
+        let total_locked_token = record.token.clone();
+        let current_total = read_total_locked(&env, &total_locked_token);
+        write_total_locked(&env, &total_locked_token, current_total.saturating_sub(record.amount));
 
         let fleet_management = get_fleet_management_contract(&env);
         settle_escrow_funds(
@@ -1735,16 +1742,9 @@ impl EscrowContract {
         record.status = EscrowStatus::Refunded;
         save_escrow(&env, delivery_id, &record);
 
-        let total_locked_key = DataKey::TotalLocked(record.token.clone());
-        let current_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&total_locked_key)
-            .unwrap_or(0);
-        env.storage().persistent().set(
-            &total_locked_key,
-            &current_total.saturating_sub(record.amount),
-        );
+        let total_locked_token = record.token.clone();
+        let current_total = read_total_locked(&env, &total_locked_token);
+        write_total_locked(&env, &total_locked_token, current_total.saturating_sub(record.amount));
 
         token::Client::new(&env, &record.token).transfer(
             &env.current_contract_address(),
@@ -1879,16 +1879,9 @@ impl EscrowContract {
 
         save_escrow(&env, delivery_id, &record);
 
-        let total_locked_key = DataKey::TotalLocked(record.token.clone());
-        let current_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&total_locked_key)
-            .unwrap_or(0);
-        env.storage().persistent().set(
-            &total_locked_key,
-            &current_total.saturating_sub(record.amount),
-        );
+        let total_locked_token = record.token.clone();
+        let current_total = read_total_locked(&env, &total_locked_token);
+        write_total_locked(&env, &total_locked_token, current_total.saturating_sub(record.amount));
 
         if let Some((fleet_management, driver_amount, platform_fee)) = settle_params {
             settle_escrow_funds(
@@ -1972,16 +1965,9 @@ impl EscrowContract {
         record.status = EscrowStatus::Split;
         save_escrow(&env, delivery_id, &record);
 
-        let total_locked_key = DataKey::TotalLocked(record.token.clone());
-        let current_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&total_locked_key)
-            .unwrap_or(0);
-        env.storage().persistent().set(
-            &total_locked_key,
-            &current_total.saturating_sub(record.amount),
-        );
+        let total_locked_token = record.token.clone();
+        let current_total = read_total_locked(&env, &total_locked_token);
+        write_total_locked(&env, &total_locked_token, current_total.saturating_sub(record.amount));
 
         if sender_amount > 0 {
             token::Client::new(&env, &record.token).transfer(
@@ -2199,12 +2185,8 @@ impl EscrowContract {
         let contract_balance =
             token::Client::new(&env, &record.token).balance(&env.current_contract_address());
 
-        let total_locked_key = DataKey::TotalLocked(record.token.clone());
-        let current_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&total_locked_key)
-            .unwrap_or(0);
+        let total_locked_token = record.token.clone();
+        let current_total = read_total_locked(&env, &total_locked_token);
 
         if contract_balance < record.amount || current_total > contract_balance {
             panic_with_error!(&env, TrustchainError::InsufficientFunds);
@@ -2213,10 +2195,7 @@ impl EscrowContract {
         // below, per checks-effects-interactions.
         record.status = EscrowStatus::Refunded;
         save_escrow(&env, delivery_id, &record);
-        env.storage().persistent().set(
-            &total_locked_key,
-            &current_total.saturating_sub(record.amount),
-        );
+        write_total_locked(&env, &total_locked_token, current_total.saturating_sub(record.amount));
 
         token::Client::new(&env, &record.token).transfer(
             &env.current_contract_address(),
@@ -2254,9 +2233,13 @@ impl EscrowContract {
         index_page(&env, owner, kind, offset, limit)
     }
 
+    /// Total escrow liability currently held for `token`.
+    ///
+    /// Reading renews the counter's TTL, so any caller (keeper, monitor or
+    /// the admin's own `get_untracked_balance` check) can keep the liability
+    /// record alive alongside the escrows it accounts for.
     pub fn get_total_locked(env: Env, token: Address) -> i128 {
-        let key = DataKey::TotalLocked(token);
-        env.storage().persistent().get(&key).unwrap_or(0)
+        read_total_locked(&env, &token)
     }
 
     /// Returns the amount of untracked balance for a given token without executing

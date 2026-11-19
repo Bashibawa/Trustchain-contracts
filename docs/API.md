@@ -935,6 +935,13 @@ Returns the total amount of `token` currently locked across all escrows. This
 is the key metric referenced by `docs/MONITORING.md` and the basis for
 `get_untracked_balance` / `sweep_untracked_balance`.
 
+The underlying `TotalLocked` persistent entry has its TTL extended to
+`LEDGER_TTL_EXTEND_TO` on every escrow creation (single and batch), every
+settlement (release, refund, dispute resolution, reclaim) and every read
+through this getter, so the liability counter cannot expire while the escrows
+it tracks are still live. Returns `0` only for a token that has never been
+locked.
+
 **Parameters:**
 - `token: Address` - The token to query
 
