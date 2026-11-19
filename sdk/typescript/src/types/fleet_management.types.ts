@@ -121,3 +121,12 @@ export interface GetFleetRosterParams {
    */
   limit?: number;
 }
+
+/** Parameters for `renew_fleet_roster`; same paging semantics as {@link GetFleetRosterParams}. */
+export interface RenewFleetRosterParams {
+  fleetId: bigint;
+  /** Roster index to start renewing from. Defaults to 0. */
+  offset?: number;
+  /** Maximum number of roster entries to renew. Clamped by the contract to `MAX_ROSTER_PAGE_SIZE`. */
+  limit?: number;
+}

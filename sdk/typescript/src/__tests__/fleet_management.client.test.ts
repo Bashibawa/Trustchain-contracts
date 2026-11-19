@@ -256,3 +256,32 @@ describe('FleetManagementClient.reactivateFleet', () => {
     expect(scValToNative(args[1] as xdr.ScVal)).toBe(42n);
   });
 });
+
+describe('FleetManagementClient.renewFleetRoster', () => {
+  it('calls renew_fleet_roster with fleet id, offset and limit and returns the count', async () => {
+    const call = mockInvoker({
+      renew_fleet_roster: [nativeToScVal(3, { type: 'u32' })],
+    });
+
+    const renewed = await client().renewFleetRoster({ fleetId: 7n, offset: 2, limit: 5 });
+
+    expect(renewed).toBe(3);
+    const [fn, args] = call.mock.calls[0];
+    expect(fn).toBe('renew_fleet_roster');
+    expect(scValToNative(args[0])).toBe(7n);
+    expect(scValToNative(args[1])).toBe(2);
+    expect(scValToNative(args[2])).toBe(5);
+  });
+
+  it('defaults to the first full page', async () => {
+    const call = mockInvoker({
+      renew_fleet_roster: [nativeToScVal(0, { type: 'u32' })],
+    });
+
+    await client().renewFleetRoster({ fleetId: 1n });
+
+    const [, args] = call.mock.calls[0];
+    expect(scValToNative(args[1])).toBe(0);
+    expect(scValToNative(args[2])).toBe(100);
+  });
+});

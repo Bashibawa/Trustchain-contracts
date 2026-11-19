@@ -72,6 +72,32 @@ fn renew_contract_state(env: &Env) {
     }
 }
 
+/// Renew the two persistent records that together describe one active fleet
+/// member: the `DriverFleet(fleet_id, driver)` membership status and the
+/// `FleetRoster(fleet_id, index)` slot that lists the driver in the roster.
+///
+/// The two records are separate ledger entries with independent TTLs. If one
+/// is renewed without the other they drift apart, and the shorter-lived one
+/// can be archived first — a lapsed slot makes `get_fleet_roster` pagination
+/// incomplete and `remove_driver_from_fleet` compaction fail with
+/// `InternalStorageError`, while a lapsed membership record silently changes
+/// payout routing. Every path that renews one of them for an active member
+/// goes through this helper so both always share the same lifetime.
+fn renew_active_membership(env: &Env, fleet_id: u64, driver: &Address, index: u32) {
+    let membership_key = DataKey::DriverFleet(fleet_id, driver.clone());
+    env.storage().persistent().extend_ttl(
+        &membership_key,
+        ttl::LEDGER_TTL_THRESHOLD,
+        ttl::LEDGER_TTL_EXTEND_TO,
+    );
+    let slot_key = DataKey::FleetRoster(fleet_id, index);
+    env.storage().persistent().extend_ttl(
+        &slot_key,
+        ttl::LEDGER_TTL_THRESHOLD,
+        ttl::LEDGER_TTL_EXTEND_TO,
+    );
+}
+
 fn require_escrow_not_paused(env: &Env) {
     let Some(escrow_contract) = env
         .storage()
@@ -178,8 +204,9 @@ pub enum FleetError {
     NoPendingTreasuryChange = 8,
     FleetInactive = 10,
     InvalidConfiguration = 11,
-    /// Roster compaction read a slot that was expected to exist but was absent
-    /// from persistent storage — indicates corrupted or out-of-sync state.
+    /// A roster read (`get_fleet_roster`, `renew_fleet_roster`) or roster
+    /// compaction found a slot that was expected to exist but was absent from
+    /// persistent storage — indicates corrupted or out-of-sync state.
     InternalStorageError = 12,
     /// The accepting address has no `DriverProfile` in the configured
     /// identity_reputation_contract, so it cannot legally complete a
@@ -245,6 +272,7 @@ pub enum DataKey {
     /// Persistent key — driver's status within a fleet (Pending | Active).
     DriverFleet(u64, Address),
     /// Persistent key — one active roster entry, keyed by fleet and index.
+    /// Always renewed together with the matching `DriverFleet` record.
     FleetRoster(u64, u32),
     /// Persistent key — pending, not-yet-confirmed treasury change for a fleet.
     PendingTreasury(u64),
@@ -1106,11 +1134,6 @@ impl FleetManagementContract {
         env.storage()
             .persistent()
             .set(&invite_key, &DriverFleetStatus::Active);
-        env.storage().persistent().extend_ttl(
-            &invite_key,
-            ttl::LEDGER_TTL_THRESHOLD,
-            ttl::LEDGER_TTL_EXTEND_TO,
-        );
 
         // Update active driver count on the fleet profile.
         profile.total_active_drivers += 1;
@@ -1124,13 +1147,11 @@ impl FleetManagementContract {
 
         // Add the driver as one indexed roster entry. The previous active
         // count is the next free roster index.
-        let roster_key = DataKey::FleetRoster(fleet_id, profile.total_active_drivers - 1);
+        let roster_index = profile.total_active_drivers - 1;
+        let roster_key = DataKey::FleetRoster(fleet_id, roster_index);
         env.storage().persistent().set(&roster_key, &driver);
-        env.storage().persistent().extend_ttl(
-            &roster_key,
-            ttl::LEDGER_TTL_THRESHOLD,
-            ttl::LEDGER_TTL_EXTEND_TO,
-        );
+        // Membership and roster slot start with the same lifetime.
+        renew_active_membership(&env, fleet_id, &driver, roster_index);
 
         // Emit event.
         env.events().publish(
@@ -1264,11 +1285,10 @@ impl FleetManagementContract {
                     env.storage()
                         .persistent()
                         .set(&removed_slot_key, &last_driver);
-                    env.storage().persistent().extend_ttl(
-                        &removed_slot_key,
-                        ttl::LEDGER_TTL_THRESHOLD,
-                        ttl::LEDGER_TTL_EXTEND_TO,
-                    );
+                    // Renew the moved driver's membership together with its
+                    // new slot; renewing only the slot would leave the two
+                    // records on diverging TTLs.
+                    renew_active_membership(&env, fleet_id, &last_driver, index);
                 }
                 // Delete the now-vacant last slot.
                 env.storage()
@@ -1354,6 +1374,9 @@ impl FleetManagementContract {
     /// The returned page is clamped to the fleet's actual active driver count.
     /// Returns an empty Vec if no drivers are active in the fleet or if
     /// `offset` is past the end of the roster.
+    ///
+    /// Panics with `InternalStorageError` if a slot inside the active range
+    /// is missing, instead of returning a silently incomplete page.
     pub fn get_fleet_roster(
         env: Env,
         fleet_id: u64,
@@ -1374,15 +1397,63 @@ impl FleetManagementContract {
         let end = offset.saturating_add(page_size).min(active_count);
 
         for index in offset..end {
-            if let Some(driver) = env
+            // Every index below `total_active_drivers` must hold a slot. A
+            // missing one means the roster is out of sync with membership, so
+            // fail loudly rather than return a silently short page that a
+            // paginating client would mistake for a complete roster.
+            let driver: Address = env
                 .storage()
                 .persistent()
-                .get::<_, Address>(&DataKey::FleetRoster(fleet_id, index))
-            {
-                roster.push_back(driver);
-            }
+                .get(&DataKey::FleetRoster(fleet_id, index))
+                .unwrap_or_else(|| panic_with_error!(&env, FleetError::InternalStorageError));
+            roster.push_back(driver);
         }
         roster
+    }
+
+    /// Renew the storage lifetime of one page of a fleet's active roster.
+    ///
+    /// For every roster slot in `[offset, offset + limit)` (clamped to
+    /// [`MAX_ROSTER_PAGE_SIZE`] and to the active driver count) this extends
+    /// both the `FleetRoster` slot and the driver's `DriverFleet` membership
+    /// record to the same TTL, along with the fleet profile and contract
+    /// state. It lets a fleet (or any keeper) keep a quiet roster alive and
+    /// resynchronise slot and membership lifetimes without changing any
+    /// state, mirroring Soroban's permissionless TTL extension.
+    ///
+    /// Returns the number of roster entries renewed. Panics with
+    /// `FleetNotFound` for an unknown fleet and `InternalStorageError` if a
+    /// slot that should exist is missing.
+    pub fn renew_fleet_roster(env: Env, fleet_id: u64, offset: u32, limit: u32) -> u32 {
+        renew_contract_state(&env);
+        let fleet_key = DataKey::Fleet(fleet_id);
+        let profile: FleetProfile = env
+            .storage()
+            .persistent()
+            .get(&fleet_key)
+            .unwrap_or_else(|| panic_with_error!(&env, FleetError::FleetNotFound));
+        env.storage().persistent().extend_ttl(
+            &fleet_key,
+            ttl::LEDGER_TTL_THRESHOLD,
+            ttl::LEDGER_TTL_EXTEND_TO,
+        );
+
+        let page_size = limit.min(MAX_ROSTER_PAGE_SIZE);
+        let end = offset
+            .saturating_add(page_size)
+            .min(profile.total_active_drivers);
+
+        let mut renewed = 0u32;
+        for index in offset..end {
+            let driver: Address = env
+                .storage()
+                .persistent()
+                .get(&DataKey::FleetRoster(fleet_id, index))
+                .unwrap_or_else(|| panic_with_error!(&env, FleetError::InternalStorageError));
+            renew_active_membership(&env, fleet_id, &driver, index);
+            renewed += 1;
+        }
+        renewed
     }
 
     /// Configure multi-signature requirements for a fleet.

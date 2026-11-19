@@ -2350,3 +2350,168 @@ fn test_fleet_counter_restored_after_archival_continues_sequence() {
     // extension instead of being left on the minimal restore TTL.
     assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
 }
+
+// ── Roster slot / membership TTL synchronisation ─────────────────────────────
+
+fn membership_ttl(
+    env: &Env,
+    client: &FleetManagementContractClient,
+    fleet_id: u64,
+    driver: &Address,
+) -> u32 {
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&DataKey::DriverFleet(fleet_id, driver.clone()))
+    })
+}
+
+fn roster_slot_ttl(
+    env: &Env,
+    client: &FleetManagementContractClient,
+    fleet_id: u64,
+    index: u32,
+) -> u32 {
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&DataKey::FleetRoster(fleet_id, index))
+    })
+}
+
+/// Register a fleet and activate `count` drivers; returns (fleet_id, owner, drivers).
+fn fleet_with_active_drivers(
+    env: &Env,
+    client: &FleetManagementContractClient,
+    count: u32,
+) -> (u64, Address, std::vec::Vec<Address>) {
+    let (fleet_id, owner, _treasury) = register_fleet(env, client);
+    let mut drivers = std::vec::Vec::new();
+    for _ in 0..count {
+        let driver = Address::generate(env);
+        client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(env));
+        client.accept_fleet_invite(&fleet_id, &driver);
+        drivers.push(driver);
+    }
+    (fleet_id, owner, drivers)
+}
+
+#[test]
+fn test_accept_invite_gives_slot_and_membership_same_ttl() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, _owner, drivers) = fleet_with_active_drivers(&env, &client, 1);
+
+    assert_eq!(
+        membership_ttl(&env, &client, fleet_id, &drivers[0]),
+        ttl::LEDGER_TTL_EXTEND_TO
+    );
+    assert_eq!(
+        roster_slot_ttl(&env, &client, fleet_id, 0),
+        ttl::LEDGER_TTL_EXTEND_TO
+    );
+}
+
+#[test]
+fn test_roster_compaction_renews_moved_driver_membership_with_slot() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, owner, drivers) = fleet_with_active_drivers(&env, &client, 3);
+    advance_past_renewal_threshold(&env);
+
+    // Removing slot 0 moves the last driver (drivers[2]) into slot 0.
+    client.remove_driver_from_fleet(&fleet_id, &owner, &drivers[0], &no_co_signers(&env));
+    assert_eq!(
+        client.get_fleet_roster(&fleet_id, &0, &10).get(0).unwrap(),
+        drivers[2]
+    );
+
+    // Divergent expiry: previously only the slot was renewed, so the moved
+    // driver's membership kept its older, shorter TTL.
+    let slot_ttl = roster_slot_ttl(&env, &client, fleet_id, 0);
+    assert_eq!(slot_ttl, ttl::LEDGER_TTL_EXTEND_TO);
+    assert_eq!(
+        membership_ttl(&env, &client, fleet_id, &drivers[2]),
+        slot_ttl
+    );
+}
+
+#[test]
+fn test_renew_fleet_roster_extends_slots_and_memberships_together() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, _owner, drivers) = fleet_with_active_drivers(&env, &client, 3);
+    advance_past_renewal_threshold(&env);
+    for (index, driver) in drivers.iter().enumerate() {
+        assert!(roster_slot_ttl(&env, &client, fleet_id, index as u32) < ttl::LEDGER_TTL_THRESHOLD);
+        assert!(membership_ttl(&env, &client, fleet_id, driver) < ttl::LEDGER_TTL_THRESHOLD);
+    }
+
+    let renewed = client.renew_fleet_roster(&fleet_id, &0, &10);
+
+    assert_eq!(renewed, 3);
+    for (index, driver) in drivers.iter().enumerate() {
+        assert_eq!(
+            roster_slot_ttl(&env, &client, fleet_id, index as u32),
+            ttl::LEDGER_TTL_EXTEND_TO
+        );
+        assert_eq!(
+            membership_ttl(&env, &client, fleet_id, driver),
+            ttl::LEDGER_TTL_EXTEND_TO
+        );
+    }
+    let fleet_ttl = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get_ttl(&DataKey::Fleet(fleet_id))
+    });
+    assert_eq!(fleet_ttl, ttl::LEDGER_TTL_EXTEND_TO);
+}
+
+#[test]
+fn test_renew_fleet_roster_is_paged_and_clamped() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, _owner, drivers) = fleet_with_active_drivers(&env, &client, 3);
+    advance_past_renewal_threshold(&env);
+
+    // Only the requested window is renewed.
+    assert_eq!(client.renew_fleet_roster(&fleet_id, &1, &1), 1);
+    assert!(roster_slot_ttl(&env, &client, fleet_id, 0) < ttl::LEDGER_TTL_THRESHOLD);
+    assert_eq!(
+        roster_slot_ttl(&env, &client, fleet_id, 1),
+        ttl::LEDGER_TTL_EXTEND_TO
+    );
+    assert_eq!(
+        membership_ttl(&env, &client, fleet_id, &drivers[1]),
+        ttl::LEDGER_TTL_EXTEND_TO
+    );
+    assert!(roster_slot_ttl(&env, &client, fleet_id, 2) < ttl::LEDGER_TTL_THRESHOLD);
+
+    // Offsets past the end renew nothing; oversized limits are clamped.
+    assert_eq!(client.renew_fleet_roster(&fleet_id, &3, &10), 0);
+    assert_eq!(client.renew_fleet_roster(&fleet_id, &0, &u32::MAX), 3);
+}
+
+#[test]
+fn test_renew_fleet_roster_unknown_fleet_fails() {
+    let (_env, client, _admin) = setup_test();
+    let result = client.try_renew_fleet_roster(&99, &0, &10);
+    assert_eq!(result, Err(Ok(FleetError::FleetNotFound.into())));
+}
+
+#[test]
+fn test_missing_roster_slot_is_reported_not_silently_skipped() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, _owner, _drivers) = fleet_with_active_drivers(&env, &client, 3);
+
+    // Simulate a slot that lapsed independently of its membership record.
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::FleetRoster(fleet_id, 1));
+    });
+
+    // Previously this returned a 2-entry page indistinguishable from a
+    // complete roster.
+    let page = client.try_get_fleet_roster(&fleet_id, &0, &10);
+    assert_eq!(page, Err(Ok(FleetError::InternalStorageError.into())));
+    let renew = client.try_renew_fleet_roster(&fleet_id, &0, &10);
+    assert_eq!(renew, Err(Ok(FleetError::InternalStorageError.into())));
+}

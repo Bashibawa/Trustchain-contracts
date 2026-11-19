@@ -2456,7 +2456,7 @@ Accept a pending fleet invite.
 **State Changes:**
 - Sets `DriverFleetStatus::Active` for `(fleet_id, driver)`
 - Increments `FleetProfile.total_active_drivers`
-- Appends the driver as an indexed roster entry
+- Appends the driver as an indexed roster entry, giving the roster slot and the membership record the same TTL
 
 #### `remove_driver_from_fleet`
 Remove a driver from a fleet. Either a signer on the fleet or the driver themselves may initiate the removal.
@@ -2478,7 +2478,7 @@ Remove a driver from a fleet. Either a signer on the fleet or the driver themsel
 **State Changes:**
 - Sets the driver's membership status to `Removed`
 - Decrements `FleetProfile.total_active_drivers` if the driver was active
-- Compacts the roster index so it remains contiguous
+- Compacts the roster index so it remains contiguous; the driver moved into the vacated slot has its membership record renewed together with the slot
 
 #### `get_driver_fleet_status`
 Return the fleet membership status of a driver, or `None` if no record exists.
@@ -2500,6 +2500,31 @@ Return a page of the active roster of drivers for a fleet.
 **Returns:** `Vec<Address>` — the requested page, clamped to the fleet's actual active driver count
 
 **Notes:** The roster is stored as individually keyed entries, so unbounded enumeration would exceed Soroban's ledger read-entry limits for large fleets (Issue #442). Iterate `offset` in `limit`-sized steps to page through the full roster.
+
+**Errors:**
+- `InternalStorageError` - A roster slot inside the active range is missing (slot and membership out of sync). Previously the slot was silently skipped, returning an incomplete page.
+
+#### `renew_fleet_roster`
+Renew the storage TTL of one page of a fleet's active roster without changing any state.
+
+**Parameters:**
+- `fleet_id: FleetId` - Fleet identifier
+- `offset: u32` - Roster index to start renewing from
+- `limit: u32` - Maximum entries to renew, clamped to `MAX_ROSTER_PAGE_SIZE` (100)
+
+**Authorization:** None (permissionless, like Soroban TTL extension)
+
+**Returns:** `u32` — number of roster entries renewed
+
+**Errors:**
+- `FleetNotFound` - No fleet with that ID exists
+- `InternalStorageError` - A roster slot inside the active range is missing
+
+**State Changes:**
+- Extends each `FleetRoster(fleet_id, index)` slot **and** the matching `DriverFleet(fleet_id, driver)` membership record to the same TTL
+- Extends the fleet profile, fleet counter and instance TTL
+
+**Notes:** Roster slots and membership records are separate ledger entries. Every code path that renews one for an active member renews the other, so they cannot expire independently; this function lets keepers renew a quiet roster page by page.
 
 #### `configure_signers`
 Configure the signer set and signature threshold for a fleet.
