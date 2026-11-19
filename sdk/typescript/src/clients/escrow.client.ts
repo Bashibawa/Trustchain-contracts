@@ -229,6 +229,29 @@ export class EscrowClient {
   }
 
   /**
+   * Set the holdback release delay in seconds (admin only).
+   *
+   * Out-of-range or non-integer values throw a `RangeError` locally; the
+   * contract enforces the same inclusive bounds and reverts with
+   * `InvalidState`. Reverts with `Unauthorized` for a non-admin caller.
+   */
+  async setHoldbackWindow(
+    params: EscrowTypes.SetHoldbackWindowParams,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    const windowSeconds = assertHoldbackWindow(params.windowSeconds);
+    await this.invoker.call('set_holdback_window', [address(params.admin), u64(windowSeconds)], options);
+  }
+
+  /**
+   * Read the holdback window currently applied, in seconds. Returns
+   * `DEFAULT_HOLDBACK_WINDOW_SECONDS` when the admin has never set one.
+   */
+  async getHoldbackWindow(options?: ContractInvokeOptions): Promise<bigint> {
+    return BigInt(String(await this.invoker.call('get_holdback_window', [], options)));
+  }
+
+  /**
    * Get an escrow record by delivery ID
    */
   async getEscrow(deliveryId: bigint, options?: ContractInvokeOptions): Promise<EscrowRecord> {
@@ -378,6 +401,22 @@ export class EscrowClient {
   async setPaused(admin: string, paused: boolean, options?: ContractInvokeOptions): Promise<void> {
     await this.invoker.call('set_paused', [address(admin), bool(paused)], options);
   }
+}
+
+function assertHoldbackWindow(value: bigint | number): bigint {
+  if (typeof value === 'number' && !Number.isInteger(value)) {
+    throw new RangeError(`holdback window must be an integer number of seconds, got ${value}`);
+  }
+  const seconds = BigInt(value);
+  if (
+    seconds < EscrowTypes.MIN_HOLDBACK_WINDOW_SECONDS ||
+    seconds > EscrowTypes.MAX_HOLDBACK_WINDOW_SECONDS
+  ) {
+    throw new RangeError(
+      `holdback window must be within [${EscrowTypes.MIN_HOLDBACK_WINDOW_SECONDS}, ${EscrowTypes.MAX_HOLDBACK_WINDOW_SECONDS}] seconds, got ${seconds}`
+    );
+  }
+  return seconds;
 }
 
 function xdrVoid() {

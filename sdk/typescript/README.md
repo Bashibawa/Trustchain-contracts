@@ -272,6 +272,17 @@ Read the configured volume thresholds and discounts.
 ##### `getSenderVolume(sender: string): Promise<number>`
 Read a sender's accumulated volume.
 
+##### `setHoldbackWindow(params: SetHoldbackWindowParams): Promise<void>`
+Set the holdback release delay in seconds (admin only) via `set_holdback_window`.
+`params.windowSeconds` must be an integer in the inclusive range
+[`MIN_HOLDBACK_WINDOW_SECONDS` (1 day), `MAX_HOLDBACK_WINDOW_SECONDS` (365 days)];
+other values throw a `RangeError` before a transaction is built (the contract
+reverts with `InvalidState` for the same inputs).
+
+##### `getHoldbackWindow(): Promise<bigint>`
+Read the holdback window currently applied, in seconds. Returns
+`DEFAULT_HOLDBACK_WINDOW_SECONDS` (3 days) when the admin has never set one.
+
 ### DeliveryClient
 
 #### Methods
