@@ -110,6 +110,21 @@ export interface ConfigureSignersParams {
 
 export { DriverFleetStatus, FleetProfile, PendingTreasuryChange };
 
+/**
+ * Mirrors the Rust `PendingContractAddress` struct returned by the fleet
+ * contract's `get_pending_escrow_contract` / `get_pending_identity_contract`
+ * queries. Present only while a timelocked peer-contract change is queued;
+ * `null` from the getters means nothing is pending.
+ */
+export interface PendingContractAddress {
+  /** Peer contract address queued for activation. */
+  address: string;
+  /** Admin that proposed the change. */
+  proposedBy: string;
+  /** Unix timestamp (seconds) at or after which the change may be confirmed. */
+  activatesAt: bigint;
+}
+
 export interface GetFleetRosterParams {
   fleetId: bigint;
   /** Roster index to start reading from. Defaults to 0. */

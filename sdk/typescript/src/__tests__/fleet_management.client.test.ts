@@ -256,3 +256,88 @@ describe('FleetManagementClient.reactivateFleet', () => {
     expect(scValToNative(args[1] as xdr.ScVal)).toBe(42n);
   });
 });
+
+// ── Pending peer-contract queries ─────────────────────────────────────────────
+
+const PROPOSED_ESCROW = 'CADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQP5KR';
+const ACTIVATES_AT = 1_700_086_400n;
+
+/** Encode a Rust `PendingContractAddress` struct as the contract returns it. */
+function pendingContractScVal(addr: string, proposedBy: string, activatesAt: bigint): xdr.ScVal {
+  return xdr.ScVal.scvMap([
+    new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol('activates_at'),
+      val: nativeToScVal(activatesAt, { type: 'u64' }),
+    }),
+    new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol('address'),
+      val: nativeToScVal(addr, { type: 'address' }),
+    }),
+    new xdr.ScMapEntry({
+      key: xdr.ScVal.scvSymbol('proposed_by'),
+      val: nativeToScVal(proposedBy, { type: 'address' }),
+    }),
+  ]);
+}
+
+describe('FleetManagementClient.getPendingEscrowContract', () => {
+  it('calls get_pending_escrow_contract with no args and decodes the record', async () => {
+    const call = mockInvoker({
+      get_pending_escrow_contract: [pendingContractScVal(PROPOSED_ESCROW, ADMIN, ACTIVATES_AT)],
+    });
+
+    const result = await client().getPendingEscrowContract();
+
+    expect(result).toEqual({
+      address: PROPOSED_ESCROW,
+      proposedBy: ADMIN,
+      activatesAt: ACTIVATES_AT,
+    });
+    expect(typeof result?.activatesAt).toBe('bigint');
+    expect(call).toHaveBeenCalledTimes(1);
+    const [fn, args] = call.mock.calls[0];
+    expect(fn).toBe('get_pending_escrow_contract');
+    expect(args).toHaveLength(0);
+  });
+
+  it('preserves u64 activation times beyond Number.MAX_SAFE_INTEGER', async () => {
+    const huge = 18_446_744_073_709_551_615n; // u64::MAX (saturating_add ceiling)
+    mockInvoker({
+      get_pending_escrow_contract: [pendingContractScVal(PROPOSED_ESCROW, ADMIN, huge)],
+    });
+
+    const result = await client().getPendingEscrowContract();
+
+    expect(result?.activatesAt).toBe(huge);
+  });
+
+  it('returns null when no escrow change is pending (Option::None)', async () => {
+    mockInvoker({ get_pending_escrow_contract: [nativeToScVal(null)] });
+
+    expect(await client().getPendingEscrowContract()).toBeNull();
+  });
+
+  it('returns null when the invoker resolves undefined', async () => {
+    jest.spyOn(ContractInvoker.prototype, 'call').mockResolvedValue(undefined as never);
+
+    expect(await client().getPendingEscrowContract()).toBeNull();
+  });
+
+  it('rejects a malformed record instead of returning partial state', async () => {
+    jest
+      .spyOn(ContractInvoker.prototype, 'call')
+      .mockResolvedValue({ address: PROPOSED_ESCROW, proposed_by: ADMIN } as never);
+
+    await expect(client().getPendingEscrowContract()).rejects.toThrow(
+      "get_pending_escrow_contract: malformed record, missing field 'activates_at'",
+    );
+  });
+
+  it('propagates a contract/simulation error to the caller', async () => {
+    jest
+      .spyOn(ContractInvoker.prototype, 'call')
+      .mockRejectedValue(new Error('Soroban simulation failed'));
+
+    await expect(client().getPendingEscrowContract()).rejects.toThrow('Soroban simulation failed');
+  });
+});
