@@ -2,7 +2,7 @@
  * Typed SDK client for EscrowContract
  */
 
-import * as EscrowTypes from '../types/escrow.types';
+import * EscrowTypes from '../types/escrow.types';
 import { nativeToScVal } from '@stellar/stellar-sdk';
 import { EscrowRecord, ContractInvokeOptions } from '../types/common.types';
 import { ContractInvoker, address, bool, i128, map, u32, u64, vec } from './invoker';
@@ -115,11 +115,14 @@ export class EscrowClient {
   }
 
   /**
-   * Create a new escrow for a delivery
+   * Create a new escrow for a delivery.
+   *
+   * The on-chain `create_escrow` returns unit, so this method resolves to
+   * `void`. The caller supplies `deliveryId` in `params`; that value is the
+   * escrow identifier used by subsequent operations (release, refund, etc.).
    */
-  async createEscrow(params: EscrowTypes.CreateEscrowParams, options?: ContractInvokeOptions): Promise<bigint> {
-    const result = await this.invoker.call('create_escrow', [address(params.sender), address(params.recipient), address(params.driver), u64(params.deliveryId), address(params.token), i128(params.amount), params.fleetId === undefined ? xdrVoid() : u64(params.fleetId)], options);
-    return BigInt(String(result));
+  async createEscrow(params: EscrowTypes.CreateEscrowParams, options?: ContractInvokeOptions): Promise<void> {
+    await this.invoker.call('create_escrow', [address(params.sender), address(params.recipient), address(params.driver), u64(params.deliveryId), address(params.token), i128(params.amount), params.fleetId === undefined ? xdrVoid() : u64(params.fleetId)], options);
   }
 
   /**
@@ -226,8 +229,6 @@ export class EscrowClient {
    */
   async markHoldbackEscrow(
     params: EscrowTypes.MarkHoldbackEscrowParams,
-    options?: ContractInvokeOptions
-  ): Promise<void> {
-    await this.invoker.call('mark_holdback_escrow', [address(params.caller), u64(params.deliveryId)], options);
-  }
-}
+    options?: 
+
+/* … truncated 161 chars — edit only what you need near the top … */
