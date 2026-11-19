@@ -114,8 +114,22 @@ export interface MarkHoldbackEscrowParams {
   deliveryId: bigint;
 }
 
+/**
+ * Parameters for `freeze_funds`. `caller` must be the configured dispute
+ * resolution contract; any other address is rejected with `Unauthorized`.
+ */
 export interface FreezeFundsParams {
   caller: string;
+  deliveryId: bigint;
+}
+
+/**
+ * Parameters for `admin_freeze_funds`, the incident-response freeze.
+ */
+export interface AdminFreezeFundsParams {
+  /** Escrow admin; must sign and match the stored admin. */
+  admin: string;
+  /** Delivery whose escrow is frozen. */
   deliveryId: bigint;
 }
 

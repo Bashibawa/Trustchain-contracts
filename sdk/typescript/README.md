@@ -272,6 +272,21 @@ Read the configured volume thresholds and discounts.
 ##### `getSenderVolume(sender: string): Promise<number>`
 Read a sender's accumulated volume.
 
+#### Emergency freeze
+
+Both methods move a `Locked`/`Holdback` escrow to `Paused` without moving
+funds, keep already-`Paused` escrows unchanged, reject terminal escrows with
+`InvalidState`, and remain available while the protocol is paused. Frozen
+escrows are recovered through `resolveDispute` / `resolveDisputeSplit`.
+
+##### `adminFreezeFunds(params: AdminFreezeFundsParams): Promise<void>`
+Incident-response freeze. `params.admin` must be the escrow admin
+(`Unauthorized` otherwise).
+
+##### `freezeFunds(params: FreezeFundsParams): Promise<void>`
+`params.caller` must be the configured dispute resolution contract
+(`Unauthorized` otherwise); not usable by the admin.
+
 #### Delivery peer rotation
 
 The delivery peer contract is rotated in two steps so a compromised admin key

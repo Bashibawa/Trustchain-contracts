@@ -298,6 +298,43 @@ export class EscrowClient {
   }
 
   /**
+   * Freeze an escrow's funds on behalf of the dispute resolution contract.
+   *
+   * Role check: `params.caller` must be the configured
+   * `dispute_resolution_contract` (`Unauthorized` otherwise; `NotInitialized`
+   * if none is configured). Incident responders should use
+   * {@link EscrowClient.adminFreezeFunds} instead.
+   *
+   * Moves a `Locked` or `Holdback` escrow to `Paused`; never transfers funds.
+   * Already-`Paused` escrows are a no-op, terminal escrows (`Released`,
+   * `Refunded`, `Split`) reject with `InvalidState`. Works while the protocol
+   * is paused.
+   */
+  async freezeFunds(params: EscrowTypes.FreezeFundsParams, options?: ContractInvokeOptions): Promise<void> {
+    await this.invoker.call('freeze_funds', [address(params.caller), u64(params.deliveryId)], options);
+  }
+
+  /**
+   * Emergency freeze of an escrow by the protocol admin.
+   *
+   * Role check: `params.admin` must sign and match the stored admin
+   * (`Unauthorized` otherwise). Same state rules as
+   * {@link EscrowClient.freezeFunds}, is not blocked by a protocol pause, and
+   * also syncs the delivery record to `Disputed` when a delivery contract is
+   * configured.
+   *
+   * Recovery: a frozen escrow is settled through the dispute path —
+   * {@link EscrowClient.resolveDispute} or
+   * {@link EscrowClient.resolveDisputeSplit}.
+   */
+  async adminFreezeFunds(
+    params: EscrowTypes.AdminFreezeFundsParams,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    await this.invoker.call('admin_freeze_funds', [address(params.admin), u64(params.deliveryId)], options);
+  }
+
+  /**
    * Reclaim an escrow that has expired
    */
   async reclaimExpiredEscrow(
