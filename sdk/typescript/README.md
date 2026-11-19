@@ -322,3 +322,28 @@ Get a delivery record.
 Get the dri
 
 /* … truncated 1736 chars — edit only what you need near the top … */
+
+### SettlementClient
+
+#### Escrow peer rotation
+
+The escrow peer is rotated through a timelocked, two-step flow. The active peer
+does not change until confirmation succeeds.
+
+```typescript
+await settlement.proposeEscrowContract({ admin, newEscrow: 'CNEW...' });
+
+const pending = await settlement.getPendingEscrowContract();
+// { address, proposedBy, activatesAt } | null
+
+// After PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS (3 days):
+if (isEscrowContractChangeReady(pending, ledgerTimestamp)) {
+  await settlement.confirmEscrowContract();
+}
+const active = await settlement.getEscrowContract();
+```
+
+- `proposeEscrowContract` → `set_escrow_contract` (admin only). A new proposal replaces any pending one and restarts the timelock.
+- `confirmEscrowContract` → `confirm_escrow_contract` (permissionless). Reverts with `NoPendingContractChange` or `ContractChangeTimelockNotElapsed` while `now < activatesAt`.
+- `getPendingEscrowContract` → `get_pending_escrow_contract`; `null` when nothing is pending.
+- `getEscrowContract` → `get_escrow_contract`.
