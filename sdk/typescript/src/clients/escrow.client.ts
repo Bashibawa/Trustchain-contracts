@@ -130,11 +130,15 @@ export class EscrowClient {
    *
    * Contract signature: `create_escrows_batch(sender, recipient, token, escrow_list)`.
    * The batch call must pass exactly these four arguments — no per-batch fleetId.
+   *
+   * The on-chain `create_escrows_batch` returns a `u32` count of the escrows
+   * created, so this method resolves to that count (`number`), not a list of
+   * escrow IDs.
    */
   async createEscrowsBatch(
     params: EscrowTypes.CreateEscrowBatchParams,
     options?: ContractInvokeOptions
-  ): Promise<bigint[]> {
+  ): Promise<number> {
     // `create_escrows_batch` takes a `Vec<(u64, Address, i128, Option<u64>)>`,
     // so each entry must be encoded as its own Vec ScVal, not a bare array.
     const entries = params.escrowList.map((entry) =>
@@ -146,7 +150,7 @@ export class EscrowClient {
       ])
     );
     const result = await this.invoker.call('create_escrows_batch', [address(params.sender), address(params.recipient), address(params.token), vec(entries)], options);
-    return decodeIds(result);
+    return Number(result);
   }
 
   /**
@@ -221,14 +225,6 @@ export class EscrowClient {
     params: EscrowTypes.ReleaseExpiredHoldbackParams,
     options?: ContractInvokeOptions
   ): Promise<void> {
-    await this.invoker.call('release_expired_holdback', [u64(params.deliveryId)], options);
-  }
+    await this.invoker.call('release_expired_holdbac
 
-  /**
-   * Mark an escrow as holdback
-   */
-  async markHoldbackEscrow(
-    params: EscrowTypes.MarkHoldbackEscrowParams,
-    options?: 
-
-/* … truncated 161 chars — edit only what you need near the top … */
+/* … truncated 252 chars — edit only what you need near the top … */
