@@ -19,6 +19,7 @@ export const FleetErrorCodes = {
   NoPendingContractChange: 15,
   ContractChangeTimelockNotElapsed: 16,
   NoPendingOwnerReassignment: 17,
+  IdentityNotConfigured: 18,
 } as const;
 
 export interface RegisterFleetParams {
@@ -29,6 +30,11 @@ export interface RegisterFleetParams {
 export interface SetIdentityContractParams {
   admin: string;
   identityContract: string;
+}
+
+export interface SetIdentityOptionalParams {
+  admin: string;
+  optional: boolean;
 }
 
 export interface SetEscrowContractParams {

@@ -2240,6 +2240,27 @@ Apply the pending identity contract after its three-day review period.
 
 **Errors:** `NoPendingContractChange`, `ContractChangeTimelockNotElapsed`
 
+#### `set_identity_optional` (fleet)
+Explicitly enable or disable no-identity mode for driver invitations and
+acceptances.
+
+**Parameters:**
+- `admin: Address` - Admin address
+- `optional: bool` - `true` to allow `add_driver_to_fleet` / `accept_fleet_invite` without an identity contract
+
+**Authorization:** Admin only
+
+**Events:** `identity_optional_updated` with data `(admin, optional)`
+
+**Notes:**
+- Default is `false`: while no identity contract is configured, both entry
+  points fail closed with `IdentityNotConfigured`.
+- Only matters while no identity contract is configured; once one is
+  confirmed, registration is always required.
+
+#### `get_identity_optional` (fleet)
+Return whether no-identity mode is enabled. **Returns:** `bool`
+
 #### `set_escrow_contract`
 Propose the escrow contract used for fleet pause checks. It becomes active
 after three days and a separate `confirm_escrow_contract` call. The pending
@@ -2436,6 +2457,8 @@ Invite a driver to join a fleet.
 - `Unauthorized` - Caller is not an authorized signer
 - `DriverAlreadyInvited` - A pending invite already exists for this driver
 - `DriverAlreadyActive` - Driver is already an active member
+- `DriverNotRegistered` - The driver has no `DriverProfile` in the configured identity contract
+- `IdentityNotConfigured` - No identity contract is configured and no-identity mode is not enabled
 
 **Events:** `driver_invited`
 
@@ -2476,8 +2499,11 @@ Accept a pending fleet invite.
 - `RosterFull` - The fleet already holds `MAX_ROSTER_SIZE` active drivers
 - `DriverNotRegistered` - The accepting address has no `DriverProfile` in the
   configured identity/reputation contract, so it could never legally complete a
-  delivery (Issue #451). **The check is skipped entirely when no identity
-  contract is configured.**
+  delivery (Issue #451).
+- `IdentityNotConfigured` - No identity contract is configured (or a proposed
+  one is still inside its timelock) and no-identity mode has not been enabled
+  with `set_identity_optional`. The check fails closed so a missing peer
+  cannot admit unregistered drivers.
 
 **Events:** `invite_accepted`
 

@@ -85,6 +85,10 @@ Shared failures such as `InvalidState`, `Unauthorized`, `DeliveryNotFound`, and
 | 12 | `InternalStorageError` | Roster compaction read a storage slot that should have existed but was absent. |
 | 13 | `DriverNotRegistered` | `accept_fleet_invite` was called by an address with no `DriverProfile` in the configured identity/reputation contract (Issue #451). |
 | 14 | `RosterFull` | The fleet already holds `MAX_ROSTER_SIZE` active drivers. |
+| 15 | `NoPendingContractChange` | `confirm_identity_contract` / `confirm_escrow_contract` called with no proposal pending. |
+| 16 | `ContractChangeTimelockNotElapsed` | A peer-contract change was confirmed before its review period elapsed. |
+| 17 | `NoPendingOwnerReassignment` | `accept_fleet_owner_reassignment` called with no reassignment pending. |
+| 18 | `IdentityNotConfigured` | `add_driver_to_fleet` / `accept_fleet_invite` ran with no identity contract configured and no-identity mode not enabled. |
 
 Shared failures such as `AlreadyInitialized`, `NotInitialized`, `Unauthorized`, and
 `TimelockNotElapsed` use `TrustchainError`.
