@@ -2476,6 +2476,7 @@ fn test_get_identity_reputation_contract_returns_none_before_configuration() {
 fn test_mark_in_transit_succeeds_without_identity_contract() {
     let env = Env::default();
     let (client, admin) = setup_bare(&env);
+    client.set_identity_optional(&admin, &true);
     let driver = Address::generate(&env);
     let recipient = Address::generate(&env);
     let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
@@ -3098,4 +3099,139 @@ fn test_confirm_delivery_party_mismatch_does_not_credit_reputation() {
         env.storage().temporary().get(&Symbol::new(&env, "rep_inc"))
     });
     assert_eq!(credited, None);
+}
+
+// ── assign_driver identity integration policy ────────────────────────────────
+
+fn assert_identity_not_configured<T: core::fmt::Debug>(
+    result: Result<Result<T, soroban_sdk::ConversionError>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
+) {
+    match result {
+        Err(Ok(err)) => assert_eq!(err, DeliveryError::IdentityNotConfigured.into()),
+        other => panic!("Expected DeliveryError::IdentityNotConfigured, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_identity_optional_defaults_to_false() {
+    let env = Env::default();
+    let (client, _admin) = setup_bare(&env);
+    assert!(!client.get_identity_optional());
+}
+
+#[test]
+fn test_assign_driver_fails_closed_without_identity_contract() {
+    let env = Env::default();
+    let (client, admin) = setup_bare(&env);
+    let recipient = Address::generate(&env);
+    let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+
+    assert_identity_not_configured(client.try_assign_driver(
+        &admin,
+        &delivery_id,
+        &Address::generate(&env),
+    ));
+    let delivery = client.get_delivery(&delivery_id);
+    assert_eq!(delivery.status, DeliveryStatus::Pending);
+    assert_eq!(delivery.driver, None);
+}
+
+#[test]
+fn test_assign_driver_allowed_in_explicit_no_identity_mode() {
+    let env = Env::default();
+    let (client, admin) = setup_bare(&env);
+    client.set_identity_optional(&admin, &true);
+    assert!(client.get_identity_optional());
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+
+    client.assign_driver(&admin, &delivery_id, &driver);
+
+    let delivery = client.get_delivery(&delivery_id);
+    assert_eq!(delivery.status, DeliveryStatus::Active);
+    assert_eq!(delivery.driver, Some(driver));
+}
+
+#[test]
+fn test_disabling_no_identity_mode_fails_closed_again() {
+    let env = Env::default();
+    let (client, admin) = setup_bare(&env);
+    client.set_identity_optional(&admin, &true);
+    client.set_identity_optional(&admin, &false);
+    let recipient = Address::generate(&env);
+    let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+
+    assert_identity_not_configured(client.try_assign_driver(
+        &admin,
+        &delivery_id,
+        &Address::generate(&env),
+    ));
+}
+
+#[test]
+fn test_require_kyc_fails_closed_without_identity_even_in_no_identity_mode() {
+    let env = Env::default();
+    let (client, admin) = setup_bare(&env);
+    client.set_identity_optional(&admin, &true);
+    client.set_require_kyc(&admin, &true);
+    let recipient = Address::generate(&env);
+    let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+
+    assert_identity_not_configured(client.try_assign_driver(
+        &admin,
+        &delivery_id,
+        &Address::generate(&env),
+    ));
+}
+
+#[test]
+fn test_no_identity_mode_does_not_bypass_configured_identity_checks() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, _, reputation_id) = setup_full(&env);
+    client.set_identity_optional(&shipper, &true);
+    env.as_contract(&reputation_id, || {
+        env.storage()
+            .temporary()
+            .set(&Symbol::new(&env, "unregistered"), &true);
+    });
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+
+    let result = client.try_assign_driver(&shipper, &delivery_id, &driver);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProviderNotFound.into()),
+        other => panic!("Expected TrustchainError::ProviderNotFound, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_set_identity_optional_requires_admin() {
+    let env = Env::default();
+    let (client, _admin) = setup_bare(&env);
+    let result = client.try_set_identity_optional(&Address::generate(&env), &true);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        other => panic!("Expected TrustchainError::Unauthorized, got {:?}", other),
+    }
+    assert!(!client.get_identity_optional());
+}
+
+#[test]
+fn test_set_identity_optional_emits_event() {
+    let env = Env::default();
+    let (client, admin) = setup_bare(&env);
+    client.set_identity_optional(&admin, &true);
+
+    let events = env.events().all();
+    let raw_event = events.events().last().expect("no event emitted");
+    let xdr::ContractEventBody::V0(body) = raw_event.body.clone();
+    let topic_val = Val::try_from_val(&env, body.topics.get(0).unwrap()).unwrap();
+    let topic = Symbol::try_from_val(&env, &topic_val).unwrap();
+    let data = Val::try_from_val(&env, &body.data).unwrap();
+    let (event_admin, optional): (Address, bool) =
+        <(Address, bool)>::try_from_val(&env, &data).unwrap();
+
+    assert_eq!(topic, Symbol::new(&env, "identity_optional_updated"));
+    assert_eq!(event_admin, admin);
+    assert!(optional);
 }

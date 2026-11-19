@@ -1200,8 +1200,9 @@ Assign a driver to a delivery.
 - `NotAuthorized` - Caller not admin or driver
 - `DeliveryNotFound` - Invalid delivery_id
 - `InvalidState` - Delivery not in Pending state
-- `ProviderNotFound` - KYC enforcement enabled, identity contract configured, and the driver has no profile
-- `Unauthorized` - KYC enforcement enabled and `driver.kyc_verified` is `false`
+- `ProviderNotFound` - Identity contract configured and the driver has no profile
+- `Unauthorized` - Driver is suspended, or KYC enforcement enabled and `driver.kyc_verified` is `false`
+- `IdentityNotConfigured` - No identity contract configured and no-identity mode not enabled (or `require_kyc` is `true`)
 
 **Events:** `driver_assigned`
 
@@ -1209,14 +1210,20 @@ Assign a driver to a delivery.
 - Sets delivery.driver to specified address
 - Updates status to Active
 
+**Identity integration policy:**
+When an identity contract is configured, `assign_driver` requires the driver
+to have a profile (`has_driver_profile`) that is not suspended. When none is
+configured, `assign_driver` **fails closed** with `IdentityNotConfigured`,
+unless the admin has deliberately enabled no-identity mode with
+`set_identity_optional(admin, true)`. Without this, a partially configured
+deployment would accept arbitrary driver addresses.
+
 **KYC Gate (Issue #314):**
-When `require_kyc` is `true` (set via `set_require_kyc`) **and** the identity
-contract is configured, `assign_driver` cross-calls
-`identity_reputation_contract::has_driver_profile` and
-`get_driver_profile` to confirm the driver exists and has `kyc_verified = true`.
-The gate is silently skipped when no identity contract is configured, so
-deployments that have not wired one up continue to work even with the flag set.
-The default is `false` (gate disabled), preserving all existing flows.
+When `require_kyc` is `true` (set via `set_require_kyc`), `assign_driver`
+also requires `kyc_verified = true` on the driver's profile. KYC cannot be
+checked without an identity contract, so with `require_kyc` set and no
+identity contract, assignment fails with `IdentityNotConfigured` even in
+no-identity mode. The default is `false` (gate disabled).
 
 **Example:**
 ```rust
@@ -1241,8 +1248,34 @@ Enable or disable the KYC gate on `assign_driver` (Issue #314).
 **Notes:**
 - Default is `false` (enforcement disabled).  Existing flows are unaffected
   until an admin explicitly enables this.
-- The gate is silently skipped when no identity contract is configured,
-  even when `required` is `true`.
+- With no identity contract configured, `assign_driver` fails with
+  `IdentityNotConfigured` while `required` is `true`.
+
+#### `set_identity_optional`
+Explicitly enable or disable no-identity mode for `assign_driver`.
+
+**Parameters:**
+- `admin: Address` - Admin address
+- `optional: bool` - `true` to allow assignment without an identity contract
+
+**Authorization:** Admin only
+
+**Events:** `identity_optional_updated` with data `(admin, optional)`
+
+**Notes:**
+- Default is `false`: without an identity contract, `assign_driver` fails
+  closed with `IdentityNotConfigured`.
+- Only matters while no identity contract is configured; once one is set,
+  registration, suspension, and KYC checks always apply.
+
+#### `get_identity_optional`
+Return whether no-identity mode is enabled.
+
+**Parameters:** None
+
+**Returns:** `bool`
+
+**Authorization:** None required
 
 #### `get_require_kyc`
 Return the current KYC-enforcement setting (Issue #314).

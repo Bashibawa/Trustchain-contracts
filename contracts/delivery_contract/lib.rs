@@ -78,6 +78,11 @@ pub enum DataKey {
     /// permitted.  Defaults to `false` so existing deployments and test
     /// fixtures continue to work unchanged (Issue #314).
     RequireKyc,
+    /// When `true`, the deployment has deliberately opted out of identity
+    /// integration and `assign_driver` may run with no
+    /// `IdentityReputationContract` configured. Defaults to `false`: without
+    /// an identity contract, assignment fails closed.
+    IdentityOptional,
 }
 
 const INDEX_PAGE: u32 = 64;
@@ -144,6 +149,10 @@ pub enum DeliveryError {
     /// sender, or recipient than the delivery record, so confirming would
     /// mark the delivery complete while paying someone else.
     EscrowPartyMismatch = 8,
+    /// `assign_driver` was called with no identity_reputation_contract
+    /// configured and the deployment has not opted into no-identity mode
+    /// via `set_identity_optional`, so the driver cannot be verified.
+    IdentityNotConfigured = 9,
 }
 
 mod constants {
@@ -385,10 +394,10 @@ impl DeliveryContract {
     /// existing flows are unaffected.  The default allows existing test
     /// fixtures and testnet deployments to keep working without changes.
     ///
-    /// The gate is silently skipped when no identity contract is configured,
-    /// matching the optional-integration pattern used by reputation calls,
-    /// so deployments that have not wired up the identity contract continue
-    /// to work even when this flag is `true`.
+    /// KYC cannot be verified without an identity contract, so when this flag
+    /// is `true` and no identity contract is configured, `assign_driver`
+    /// fails with `DeliveryError::IdentityNotConfigured` — even in
+    /// no-identity mode (see `set_identity_optional`).
     ///
     /// **Authorization:** Admin only.
     #[allow(deprecated)] // events().publish() deprecated in SDK 27; see SOROBAN_SDK_27_MIGRATION.md
@@ -412,6 +421,50 @@ impl DeliveryContract {
             (Symbol::new(&env, "require_kyc_updated"),),
             (admin, required),
         );
+    }
+
+    /// Explicitly opt in to (or out of) running without identity integration
+    /// (no-identity mode).
+    ///
+    /// By default `assign_driver` fails closed with
+    /// `DeliveryError::IdentityNotConfigured` when no
+    /// `identity_reputation_contract` is configured: otherwise a partially
+    /// configured deployment would accept arbitrary, unregistered, or
+    /// suspended driver addresses. Standalone deployments that do not run the
+    /// identity contract must set `optional = true` deliberately.
+    ///
+    /// This flag only matters while no identity contract is configured; once
+    /// one is set, registration, suspension, and KYC checks always apply.
+    /// `require_kyc` can never be satisfied without an identity contract, so
+    /// it still fails closed in no-identity mode.
+    ///
+    /// **Authorization:** Admin only.
+    #[allow(deprecated)] // events().publish() deprecated in SDK 27; see SOROBAN_SDK_27_MIGRATION.md
+    pub fn set_identity_optional(env: Env, admin: Address, optional: bool) {
+        admin.require_auth();
+        if !is_admin(&env, &admin) {
+            panic_with_error!(&env, TrustchainError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::IdentityOptional, &optional);
+        env.storage()
+            .instance()
+            .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
+        env.events().publish(
+            (Symbol::new(&env, "identity_optional_updated"),),
+            (admin, optional),
+        );
+    }
+
+    /// `true` when the deployment has opted into no-identity mode via
+    /// `set_identity_optional`; `false` (the default) means `assign_driver`
+    /// requires a configured identity contract.
+    pub fn get_identity_optional(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::IdentityOptional)
+            .unwrap_or(false)
     }
 
     /// Returns the current KYC-enforcement setting.  `true` means
@@ -777,11 +830,25 @@ impl DeliveryContract {
             panic_with_error!(&env, DeliveryError::InvalidDriver);
         }
 
+        let require_kyc: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::RequireKyc)
+            .unwrap_or(false);
+
         // Issue #449: fetch the driver's profile from identity_reputation_contract
         // before assignment succeeds. An unregistered driver would later cause
         // confirm_delivery to panic inside increase_reputation (ProviderNotFound),
         // permanently locking the delivery in InTransit and bricking the escrow.
-        if let Some(identity_contract) = Self::get_identity_reputation_contract(env.clone()) {
+        //
+        // With no identity contract configured, fail closed unless the admin
+        // has deliberately enabled no-identity mode; a KYC requirement can
+        // never be met without one.
+        let identity = Self::get_identity_reputation_contract(env.clone());
+        if identity.is_none() && (require_kyc || !Self::get_identity_optional(env.clone())) {
+            panic_with_error!(&env, DeliveryError::IdentityNotConfigured);
+        }
+        if let Some(identity_contract) = identity {
             let has_profile: bool = env.invoke_contract(
                 &identity_contract,
                 &Symbol::new(&env, "has_driver_profile"),
@@ -801,11 +868,6 @@ impl DeliveryContract {
             }
 
             // Issue #314: when `require_kyc` is enabled, verify that `kyc_verified == true`.
-            let require_kyc: bool = env
-                .storage()
-                .instance()
-                .get(&DataKey::RequireKyc)
-                .unwrap_or(false);
             if require_kyc && !profile.kyc_verified {
                 panic_with_error!(&env, TrustchainError::Unauthorized);
             }

@@ -44,6 +44,11 @@ export enum DeliveryErrorCode {
    * or recipient than the delivery record.
    */
   EscrowPartyMismatch = 8,
+  /**
+   * `assign_driver` was called with no identity contract configured and the
+   * deployment has not opted into no-identity mode (`setIdentityOptional`).
+   */
+  IdentityNotConfigured = 9,
 }
 
 /**
@@ -58,6 +63,7 @@ export const DeliveryErrorCodes = {
   EscrowNotLocked: 6,
   InvalidIndexKind: 7,
   EscrowPartyMismatch: 8,
+  IdentityNotConfigured: 9,
 } as const;
 
 export interface CreateDeliveryParams {

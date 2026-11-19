@@ -4206,6 +4206,8 @@ fn test_delivery_cancellation_still_refunds_sender_after_fix() {
 
     escrow_client.init(&admin, &token, &0);
     delivery_client.init(&admin, &escrow_contract_id);
+    // No identity contract here: opt into no-identity mode explicitly.
+    delivery_client.set_identity_optional(&admin, &true);
     mint(&env, &token, &sender, 800);
 
     let metadata = shared_types::DeliveryMetadata {
