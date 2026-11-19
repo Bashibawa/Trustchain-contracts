@@ -355,6 +355,14 @@ Confirm that a delivery has been completed.
 ##### `getDelivery(deliveryId: bigint): Promise<DeliveryRecord>`
 Get a delivery record.
 
+##### `setRequireKyc(params: SetRequireKycParams): Promise<void>`
+Admin only. Turns the driver KYC gate on `assign_driver` on (`required: true`)
+or off. Rejects with `Unauthorized` for non-admin callers. The gate is skipped
+while no identity contract is configured.
+
+##### `getRequireKyc(): Promise<boolean>`
+Read the KYC gate; defaults to `false`.
+
 ##### `getDriverProfile(driver: string): Promise<DeliveryDriverProfile>`
 Get the dri
 
