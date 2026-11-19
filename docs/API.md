@@ -340,7 +340,7 @@ leave the delivery contract unconfigured.
 - `Unauthorized` - Caller is not the configured admin
 - `NotInitialized` - Contract has not been initialised
 
-**Events:** `delivery_contract_change_proposed`; confirmation emits
+**Events:** `delivery_contract_proposed`; confirmation emits
 `delivery_contract_updated`.
 
 #### `confirm_delivery_contract`
@@ -2648,7 +2648,7 @@ active address changes only after three days and a separate
 **Errors:**
 - `Unauthorized` - Caller is not the stored admin
 
-**Events:** `delivery_contract_change_proposed`; confirmation emits
+**Events:** `delivery_contract_proposed`; confirmation emits
 `delivery_contract_updated` - `(admin, delivery_contract)`
 
 #### `confirm_delivery_contract`
