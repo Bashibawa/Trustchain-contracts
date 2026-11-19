@@ -419,3 +419,6 @@ Built with ❤️ by the Trustchain Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-69 -->
 - #69: Bound dispute evidence storage growth by encoded size
+
+<!-- handsoff-issue-70 -->
+- #70: Avoid duplicated reputation ceiling constants
