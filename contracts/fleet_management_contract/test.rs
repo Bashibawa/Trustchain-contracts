@@ -2246,3 +2246,107 @@ fn test_accept_invite_unrestricted_without_identity_contract() {
         Some(DriverFleetStatus::Active)
     );
 }
+
+// ── Fleet counter TTL renewal ────────────────────────────────────────────────
+
+/// Remaining TTL (in ledgers) of the persistent fleet counter.
+fn fleet_counter_ttl(env: &Env, client: &FleetManagementContractClient) -> u32 {
+    env.as_contract(&client.address, || {
+        env.storage().persistent().get_ttl(&DataKey::FleetCounter)
+    })
+}
+
+/// Advance the ledger far enough that any entry extended to
+/// `LEDGER_TTL_EXTEND_TO` drops below `LEDGER_TTL_THRESHOLD` (and so is
+/// eligible for renewal) while still being live.
+fn advance_past_renewal_threshold(env: &Env) {
+    env.ledger().with_mut(|ledger| {
+        ledger.sequence_number += ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 1_000;
+    });
+}
+
+#[test]
+fn test_init_renews_fleet_counter_ttl() {
+    let (env, client, _admin) = setup_test();
+    assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
+}
+
+#[test]
+fn test_register_fleet_renews_fleet_counter_ttl() {
+    let (env, client, _admin) = setup_test();
+    advance_past_renewal_threshold(&env);
+    assert!(fleet_counter_ttl(&env, &client) < ttl::LEDGER_TTL_THRESHOLD);
+
+    register_fleet(&env, &client);
+
+    assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
+}
+
+#[test]
+fn test_fleet_activity_renews_fleet_counter_ttl() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
+    advance_past_renewal_threshold(&env);
+    assert!(fleet_counter_ttl(&env, &client) < ttl::LEDGER_TTL_THRESHOLD);
+
+    // Non-registration activity on an existing fleet must keep the counter
+    // alive too, not just the fleet's own records.
+    client.deactivate_fleet(&owner, &fleet_id);
+
+    assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
+}
+
+#[test]
+fn test_fleet_counter_survives_quiet_registration_period() {
+    let (env, client, _admin) = setup_test();
+    let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
+    assert_eq!(fleet_id, 1);
+
+    // No new fleet is registered for longer than the counter's full extended
+    // lifetime; only existing-fleet activity happens in between.
+    let mut elapsed = 0u32;
+    while elapsed <= ttl::LEDGER_TTL_EXTEND_TO {
+        advance_past_renewal_threshold(&env);
+        elapsed += ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 1_000;
+        client.deactivate_fleet(&owner, &fleet_id);
+        client.reactivate_fleet(&owner, &fleet_id);
+        // Each gap is shorter than the remaining TTL, and the activity at the
+        // end of it renews the counter back to the full extension, so the
+        // counter never lapses while no fleet is being registered.
+        assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
+    }
+
+    // The counter was renewed throughout, so the next fleet continues the
+    // sequence instead of failing or re-issuing an existing id.
+    let (next_id, _, _) = register_fleet(&env, &client);
+    assert_eq!(next_id, 2);
+    let stored: u64 = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FleetCounter)
+            .unwrap()
+    });
+    assert_eq!(stored, 2);
+}
+
+#[test]
+fn test_fleet_counter_restored_after_archival_continues_sequence() {
+    let (env, client, _admin) = setup_test();
+    let (first_id, _, _) = register_fleet(&env, &client);
+    assert_eq!(first_id, 1);
+
+    // The whole contract goes quiet for longer than any extended TTL, so the
+    // counter (and instance) lapse. The host restores archived entries with
+    // the minimum TTL when they are next accessed.
+    env.ledger().with_mut(|ledger| {
+        ledger.sequence_number += ttl::LEDGER_TTL_EXTEND_TO + 1;
+    });
+
+    // Restoration preserves the stored value: the next fleet continues the
+    // sequence rather than re-issuing id 1 ...
+    let (next_id, _, _) = register_fleet(&env, &client);
+    assert_eq!(next_id, 2);
+    // ... and the restored counter is immediately renewed to the full
+    // extension instead of being left on the minimal restore TTL.
+    assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
+}

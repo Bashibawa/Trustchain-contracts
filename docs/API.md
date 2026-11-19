@@ -2173,7 +2173,7 @@ Initialize the fleet management contract.
 
 **State Changes:**
 - Sets the protocol admin
-- Resets the fleet counter to `0`
+- Resets the fleet counter to `0` and extends its TTL (and the instance TTL) to `LEDGER_TTL_EXTEND_TO`
 
 #### `set_identity_contract`
 Propose the identity/reputation contract used for automatic driver profile
@@ -2217,6 +2217,17 @@ Apply the pending escrow contract after its three-day review period.
 
 ### Fleet Operations
 
+> **Fleet counter lifetime.** `DataKey::FleetCounter` is a single persistent
+> entry that allocates fleet ids. Every state-changing fleet call (registration,
+> invites, acceptance, removal, treasury/signer changes, (de)activation, payout
+> routing) renews its TTL together with the instance TTL, so the counter stays
+> live during periods with no new registrations. If the whole contract is idle
+> for longer than `LEDGER_TTL_EXTEND_TO` ledgers the counter is archived, not
+> deleted: it must be restored (`RestoreFootprint`, or automatic restoration of
+> archived footprint entries) before the next `register_fleet`, which then
+> continues the existing id sequence and renews the counter. The contract never
+> re-seeds the counter from zero.
+
 #### `register_fleet`
 Register a new fleet, returning its assigned fleet ID.
 
@@ -2234,7 +2245,7 @@ Register a new fleet, returning its assigned fleet ID.
 **Events:** `fleet_registered`
 
 **State Changes:**
-- Increments and persists the fleet counter
+- Increments and persists the fleet counter, renewing its TTL
 - Creates and stores a `FleetProfile`
 - Calls `identity_reputation_contract.register_driver` for the owner when an identity contract is configured
 
