@@ -316,8 +316,9 @@ When configured, both creation entry points:
 2. Verify the supplied `recipient` matches the delivery record.
 3. Verify the supplied `driver` matches the delivery record's driver **if** a
    driver has already been assigned (`assign_driver` has been called). If the
-   driver field is still `None` the check is deferred — escrow creation may
-   precede driver assignment.
+   driver field is still `None` the check is deferred to `assign_driver`,
+   which rejects any driver other than the funded escrow's driver
+   (`EscrowDriverMismatch`).
 
 When **not** configured (i.e. `get_delivery_contract` returns `None`), both
 functions behave exactly as before this change, making the check fully opt-in
@@ -1202,6 +1203,12 @@ Assign a driver to a delivery.
 - `InvalidState` - Delivery not in Pending state
 - `ProviderNotFound` - KYC enforcement enabled, identity contract configured, and the driver has no profile
 - `Unauthorized` - KYC enforcement enabled and `driver.kyc_verified` is `false`
+- `EscrowDriverMismatch` - An escrow is already funded for this delivery and `driver` is not its driver
+
+**Escrow driver binding:** escrow creation may precede assignment. When an
+escrow already exists for the delivery, `assign_driver` reads its driver via
+`escrow_contract::get_escrow_driver` and only that driver may be assigned, so
+the assigned driver and the payout target cannot diverge.
 
 **Events:** `driver_assigned`
 

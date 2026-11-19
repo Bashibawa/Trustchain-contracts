@@ -7689,3 +7689,62 @@ fn test_escrow_without_snapshot_renews_cleanly() {
     client.resolve_dispute(&admin, &20003u64, &true);
     assert_eq!(balance(&env, &token, &driver), 1000);
 }
+
+// ── Escrow driver ↔ delivery assignment binding ─────────────────────────────
+
+/// Funding before assignment commits the payout to a driver; the delivery
+/// may then only be assigned to that same driver, so the party doing the
+/// delivery and the party being paid can never diverge.
+#[test]
+fn test_assign_driver_bound_to_funded_escrow_driver() {
+    let w = setup_wired_delivery();
+    let sender = Address::generate(&w.env);
+    let recipient = Address::generate(&w.env);
+    let funded_driver = Address::generate(&w.env);
+    let other_driver = Address::generate(&w.env);
+    let did = w
+        .delivery
+        .create_delivery(&sender, &recipient, &make_delivery_metadata(&w.env, 0));
+    mint(&w.env, &w.token, &sender, 1000);
+    w.client.create_escrow(
+        &sender,
+        &recipient,
+        &funded_driver,
+        &u64::from(did),
+        &w.token,
+        &1000,
+        &None,
+    );
+    assert_eq!(
+        w.client.get_escrow_driver(&u64::from(did)),
+        Some(funded_driver.clone())
+    );
+
+    let result = w.delivery.try_assign_driver(&sender, &did, &other_driver);
+    match result {
+        Err(Ok(err)) => assert_eq!(
+            err,
+            delivery_contract::DeliveryError::EscrowDriverMismatch.into()
+        ),
+        _ => panic!("Expected DeliveryError::EscrowDriverMismatch"),
+    }
+    // The admin path is bound by the same invariant.
+    assert!(w
+        .delivery
+        .try_assign_driver(&w.admin, &did, &other_driver)
+        .is_err());
+    assert_eq!(w.delivery.get_delivery(&did).driver, None);
+
+    w.delivery.assign_driver(&sender, &did, &funded_driver);
+    assert_eq!(
+        w.delivery.get_delivery(&did).driver,
+        Some(funded_driver.clone())
+    );
+    assert_eq!(w.client.get_escrow(&u64::from(did)).driver, funded_driver);
+}
+
+#[test]
+fn test_get_escrow_driver_is_none_without_escrow() {
+    let w = setup_wired_delivery();
+    assert_eq!(w.client.get_escrow_driver(&424242u64), None);
+}

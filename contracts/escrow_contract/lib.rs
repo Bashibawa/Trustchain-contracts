@@ -294,7 +294,8 @@ fn verify_delivery_if_configured(
     }
 
     // If a driver is already assigned, it must match. If unassigned (None),
-    // the check is deferred — the driver may be assigned after escrow creation.
+    // the check is deferred to `delivery_contract::assign_driver`, which
+    // rejects any driver other than this escrow's (see `get_escrow_driver`).
     if let Some(assigned_driver) = &delivery.driver {
         if *assigned_driver != *driver {
             panic_with_error!(env, EscrowError::InvalidDriver);
@@ -2160,6 +2161,20 @@ impl EscrowContract {
     /// panic for freshly created, unfunded deliveries (Issue #395).
     pub fn has_escrow(env: Env, delivery_id: u64) -> bool {
         env.storage().persistent().has(&escrow_key(delivery_id))
+    }
+
+    /// Driver the escrow for `delivery_id` is committed to pay, or `None` when
+    /// no escrow has been funded for it.
+    ///
+    /// `delivery_contract::assign_driver` uses this to keep the delivery's
+    /// assigned driver bound to the funded payout target: an escrow may be
+    /// created before a driver is assigned, so the assignment is the point
+    /// where the two must be reconciled.
+    pub fn get_escrow_driver(env: Env, delivery_id: u64) -> Option<Address> {
+        env.storage()
+            .persistent()
+            .get::<_, EscrowRecord>(&escrow_key(delivery_id))
+            .map(|record| record.driver)
     }
 
     pub fn get_escrow(env: Env, delivery_id: u64) -> EscrowRecord {

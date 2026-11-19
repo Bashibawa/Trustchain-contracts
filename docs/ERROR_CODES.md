@@ -62,6 +62,7 @@ Shared failures such as `InvalidState`, `DeliveryNotFound`, `InsufficientFunds`,
 | 4 | `InvalidDriver` | Driver address matches the delivery's sender or recipient. |
 | 5 | `InvalidParties` | Sender and recipient are the same address. |
 | 6 | `EscrowNotLocked` | The escrow is absent or not locked when funded escrow is required. |
+| 10 | `EscrowDriverMismatch` | `assign_driver` named a driver other than the one an already-funded escrow pays. |
 
 Shared failures such as `InvalidState`, `Unauthorized`, `DeliveryNotFound`, and
 `NotInitialized` use `TrustchainError`.
