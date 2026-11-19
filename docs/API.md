@@ -2827,6 +2827,7 @@ pre-checks to avoid an `AlreadyInitialized` panic.
 
 **State Changes:**
 - Creates `DriverProfile` with `reputation_score = 50`, `deliveries_completed = 0`, `kyc_verified = false`
+- For an existing profile, extends its TTL (no other change), so a returning driver's profile is kept live
 
 **Example:**
 ```rust
@@ -2883,6 +2884,44 @@ Check whether a driver profile already exists.
 - `driver: Address` - Driver address
 
 **Returns:** `bool`
+
+Read-only: does not extend TTL (Issue #392). See
+[Driver profile archival recovery](#driver-profile-archival-recovery).
+
+#### `extend_driver_profile_ttl`
+Extend the TTL of an existing driver profile without changing it.
+
+**Parameters:**
+- `driver: Address` - Driver address
+
+**Authorization:** None (permissionless — anyone may pay to keep a profile live)
+
+**Returns:** `DriverProfile`
+
+**Errors:**
+- `ProviderNotFound` - The driver never registered
+
+#### Driver profile archival recovery
+
+`DriverProfile` is persistent storage. Mutations (`register_driver`,
+`update_driver_kyc_status`, reputation changes, `suspend_driver`,
+`reinstate_driver`) extend its TTL to `LEDGER_TTL_EXTEND_TO`; read paths
+(`get_driver_profile`, `has_driver_profile`, `is_driver_suspended`,
+`get_driver_tier`) do not. A driver inactive for longer than that window has
+their profile **archived**, not deleted: history, KYC, and suspension status
+are kept.
+
+To recover, submit any transaction that touches the profile — simulation
+attaches the restore for archived entries. The intended paths are:
+
+- the driver calls `register_driver` again: the existing profile is returned
+  unchanged (no reset, suspension kept) and its TTL is extended;
+- anyone (keeper, fleet operator, admin) calls `extend_driver_profile_ttl`,
+  which needs no signature from the driver.
+
+Off-chain clients must not treat a failed or restore-requiring read as "not
+registered". Operators who want to avoid archival entirely should call
+`extend_driver_profile_ttl` periodically for drivers they want to keep live.
 
 ### Reputation Management
 
