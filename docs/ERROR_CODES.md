@@ -33,6 +33,8 @@ define no local error enum and raise only the shared `TrustchainError` below.
 | 11 | `ProtocolPaused` | Protocol is paused and fund movements are halted. |
 | 12 | `LimitExceeded` | Requested operation would exceed a fixed capacity/growth limit (e.g. `dispute_resolution_contract::add_evidence_hash` once the calling party has already submitted its per-party maximum of 20 evidence hashes for that dispute — the cap is enforced per submitting party, so at most `3 × 20` hashes accumulate across the three delivery parties). |
 | 13 | `TimelockNotElapsed` | A requested timelocked operation was attempted before its delay elapsed. |
+| 14 | `NoPendingContractChange` | `confirm_*_contract` was called but no peer-contract address change is awaiting confirmation. |
+| 15 | `ContractChangeTimelockNotElapsed` | A peer-contract address change was confirmed before its `PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS` (3-day) review period elapsed. |
 
 Note: codes `7` and `10` are intentionally unused gaps left by prior variant removals —
 they are not reserved for anything and should not be inferred to mean "no error."

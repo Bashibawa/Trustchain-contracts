@@ -1528,10 +1528,9 @@ fn test_clear_settlement_contract_emits_audit_event() {
     let (topics, data) = last_event(&env);
     let topic: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
     assert_eq!(topic, Symbol::new(&env, "settlement_contract_cleared"));
-    assert_eq!(
-        data,
-        (admin, env.ledger().timestamp()).into_val(&env)
-    );
+    let (event_admin, event_ts): (Address, u64) = TryFromVal::try_from_val(&env, &data).unwrap();
+    assert_eq!(event_admin, admin);
+    assert_eq!(event_ts, env.ledger().timestamp());
 }
 
 #[test]
@@ -3694,14 +3693,14 @@ fn test_configured_dispute_contract_blocks_direct_admin_resolution() {
     let dispute_contract = Address::generate(&env);
 
     client.init(&admin, &token, &0);
-    mint(&env, &token, &sender, HIGH_VALUE_DISPUTE_THRESHOLD);
+    mint(&env, &token, &sender, shared_types::HIGH_VALUE_DISPUTE_THRESHOLD);
     client.create_escrow(
         &sender,
         &recipient,
         &driver,
         &1940u64,
         &token,
-        &HIGH_VALUE_DISPUTE_THRESHOLD,
+        &shared_types::HIGH_VALUE_DISPUTE_THRESHOLD,
         &None,
     );
     client.set_dispute_resolution_contract(&admin, &dispute_contract);
@@ -5021,10 +5020,9 @@ fn test_clear_fleet_management_contract_emits_audit_event() {
     let (topics, data) = last_event(&env);
     let topic: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
     assert_eq!(topic, Symbol::new(&env, "fleet_management_contract_cleared"));
-    assert_eq!(
-        data,
-        (admin, env.ledger().timestamp()).into_val(&env)
-    );
+    let (event_admin, event_ts): (Address, u64) = TryFromVal::try_from_val(&env, &data).unwrap();
+    assert_eq!(event_admin, admin);
+    assert_eq!(event_ts, env.ledger().timestamp());
 }
 
 #[test]
@@ -5345,8 +5343,8 @@ fn test_escrow_released_event_shape_matches_across_emitters() {
         &None,
     );
     client_b.set_delivery_contract(&admin_b, &delivery_contract_b);
-    env.ledger().set_timestamp(
-        env.ledger().timestamp() + shared_types::PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS,
+    env_b.ledger().set_timestamp(
+        env_b.ledger().timestamp() + shared_types::PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS,
     );
     client_b.confirm_delivery_contract();
     client_b.mark_holdback_escrow(&delivery_contract_b, &801u64);
@@ -6653,8 +6651,8 @@ fn test_set_holdback_window_rejects_above_maximum() {
         &(constants::MAX_HOLDBACK_WINDOW_SECONDS + 1),
     );
     match result {
-        Err(Ok(err)) => assert_eq!(err, EscrowError::InvalidState.into()),
-        _ => panic!("Expected EscrowError::InvalidState for an above-maximum window"),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
+        _ => panic!("Expected TrustchainError::InvalidState for an above-maximum window"),
     }
 
     assert_eq!(

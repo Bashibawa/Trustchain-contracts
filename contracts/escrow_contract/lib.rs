@@ -70,7 +70,7 @@ fn require_dispute_resolution_caller(env: &Env, caller: &Address, amount: i128) 
 
     caller.require_auth();
     require_admin(env, caller);
-    if amount >= HIGH_VALUE_DISPUTE_THRESHOLD {
+    if amount >= shared_types::HIGH_VALUE_DISPUTE_THRESHOLD {
         panic_with_error!(env, TrustchainError::Unauthorized);
     }
 }
@@ -1026,9 +1026,9 @@ impl EscrowContract {
             .storage()
             .instance()
             .get(&DataKey::PendingDeliveryContract)
-            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NoPendingContractChange));
+            .unwrap_or_else(|| panic_with_error!(&env, TrustchainError::NoPendingContractChange));
         if env.ledger().timestamp() < pending.activates_at {
-            panic_with_error!(&env, EscrowError::ContractChangeTimelockNotElapsed);
+            panic_with_error!(&env, TrustchainError::ContractChangeTimelockNotElapsed);
         }
         env.storage()
             .instance()
@@ -2093,7 +2093,7 @@ impl EscrowContract {
         if new_window_seconds < constants::MIN_HOLDBACK_WINDOW_SECONDS
             || new_window_seconds > constants::MAX_HOLDBACK_WINDOW_SECONDS
         {
-            panic_with_error!(&env, EscrowError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         env.storage()
             .instance()
