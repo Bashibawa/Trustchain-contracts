@@ -178,7 +178,7 @@ impl MockEscrowContract {
             shared_types::EscrowStatus::Locked
         };
         shared_types::EscrowRecord {
-            delivery_id: 0,
+            delivery_id,
             sender,
             recipient,
             driver,
@@ -332,6 +332,10 @@ fn setup_full(
     // `raise_dispute` is restricted to the configured dispute contract
     // (Issue #444), so the fixture registers one.
     client.set_dispute_resolution_contract(&shipper, &dispute_id);
+    // The mock escrow reports these parties by default so it funds the
+    // fixture's deliveries; `mark_in_transit` and `cancel_delivery` reject an
+    // escrow whose parties differ from the delivery record.
+    set_mock_escrow_parties(env, &escrow_id, &shipper, &recipient, &driver);
     (client, shipper, driver, recipient, escrow_id, reputation_id)
 }
 
@@ -2472,6 +2476,7 @@ fn test_mark_in_transit_succeeds_without_identity_contract() {
     let driver = Address::generate(&env);
     let recipient = Address::generate(&env);
     let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+    set_mock_escrow_parties(&env, &client.get_escrow_contract(), &admin, &recipient, &driver);
 
     client.assign_driver(&admin, &delivery_id, &driver);
     client.mark_in_transit(&driver, &delivery_id);
@@ -3083,4 +3088,137 @@ fn test_in_transit_delivery_can_only_be_cancelled_via_expired_reclaim() {
         mock_escrow_marker(&env, &escrow_id, "reclaimed"),
         Some(u64::from(delivery_id))
     );
+}
+
+// ── Funded-escrow party validation in mark_in_transit ────────────────────────
+// A Locked escrow only satisfies the funded precondition when it funds *this*
+// delivery: same delivery ID, sender, recipient and assigned driver.
+
+#[test]
+fn test_mark_in_transit_accepts_escrow_matching_all_parties() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, _, _) = setup_full(&env);
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    client.assign_driver(&shipper, &delivery_id, &driver);
+
+    client.mark_in_transit(&driver, &delivery_id);
+
+    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::InTransit);
+}
+
+#[test]
+fn test_mark_in_transit_rejects_escrow_with_mismatched_party() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    client.assign_driver(&shipper, &delivery_id, &driver);
+    let stranger = Address::generate(&env);
+
+    // Each party swapped out in turn: sender, recipient, driver.
+    let cases = [
+        (stranger.clone(), recipient.clone(), driver.clone()),
+        (shipper.clone(), stranger.clone(), driver.clone()),
+        (shipper.clone(), recipient.clone(), stranger.clone()),
+    ];
+    for (e_sender, e_recipient, e_driver) in cases.iter() {
+        set_mock_escrow_parties(&env, &escrow_id, e_sender, e_recipient, e_driver);
+        match client.try_mark_in_transit(&driver, &delivery_id) {
+            Err(Ok(err)) => assert_eq!(err, DeliveryError::EscrowMismatch.into()),
+            _ => panic!("Expected DeliveryError::EscrowMismatch"),
+        }
+        let delivery = client.get_delivery(&delivery_id);
+        assert_eq!(delivery.status, DeliveryStatus::Active);
+        assert_eq!(delivery.transit_started_at, None);
+    }
+}
+
+/// Mock escrow whose record reports a different `delivery_id` than the key
+/// it was looked up under; every other field matches the delivery.
+#[contract]
+pub struct MisKeyedEscrowContract;
+
+#[contractimpl]
+impl MisKeyedEscrowContract {
+    pub fn is_paused(_env: Env) -> bool {
+        false
+    }
+
+    pub fn set_parties(env: Env, sender: Address, recipient: Address, driver: Address) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "parties"), &(sender, recipient, driver));
+    }
+
+    pub fn get_escrow(env: Env, delivery_id: u64) -> shared_types::EscrowRecord {
+        let (sender, recipient, driver): (Address, Address, Address) = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "parties"))
+            .unwrap();
+        shared_types::EscrowRecord {
+            delivery_id: delivery_id + 1,
+            sender,
+            recipient,
+            driver,
+            token: env.current_contract_address(),
+            amount: 100,
+            status: shared_types::EscrowStatus::Locked,
+            created_at: 0,
+            expires_at: None,
+            disputed_by: None,
+            disputed_at: None,
+            holdback_started_at: None,
+            fleet_id: None,
+        }
+    }
+}
+
+#[test]
+fn test_mark_in_transit_rejects_escrow_for_different_delivery_id() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow_id = env.register(MisKeyedEscrowContract, ());
+    let client = DeliveryContractClient::new(&env, &env.register(DeliveryContract, ()));
+    let admin = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.init(&admin, &escrow_id);
+    let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+    client.assign_driver(&admin, &delivery_id, &driver);
+    set_mock_escrow_parties(&env, &escrow_id, &admin, &recipient, &driver);
+
+    match client.try_mark_in_transit(&driver, &delivery_id) {
+        Err(Ok(err)) => assert_eq!(err, DeliveryError::EscrowMismatch.into()),
+        _ => panic!("Expected DeliveryError::EscrowMismatch"),
+    }
+}
+
+#[test]
+fn test_mark_in_transit_party_check_precedes_locked_check() {
+    // Boundary: a mismatched escrow that is also not Locked reports the
+    // ownership problem, so callers are not told to "fund" an escrow that
+    // could never be used for this delivery.
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::DeliveryCounter, &8887u64);
+    });
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    assert_eq!(u64::from(delivery_id), 8888); // mock reports Refunded
+    client.assign_driver(&shipper, &delivery_id, &driver);
+    set_mock_escrow_parties(&env, &escrow_id, &shipper, &recipient, &Address::generate(&env));
+
+    match client.try_mark_in_transit(&driver, &delivery_id) {
+        Err(Ok(err)) => assert_eq!(err, DeliveryError::EscrowMismatch.into()),
+        _ => panic!("Expected DeliveryError::EscrowMismatch"),
+    }
+
+    // With matching parties the same escrow fails the Locked check instead.
+    set_mock_escrow_parties(&env, &escrow_id, &shipper, &recipient, &driver);
+    match client.try_mark_in_transit(&driver, &delivery_id) {
+        Err(Ok(err)) => assert_eq!(err, DeliveryError::EscrowNotLocked.into()),
+        _ => panic!("Expected DeliveryError::EscrowNotLocked"),
+    }
 }

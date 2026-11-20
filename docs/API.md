@@ -1262,9 +1262,16 @@ Driver marks delivery as actively in transit.
 
 **Authorization:** Assigned driver only
 
+**Preconditions:** The escrow stored under `delivery_id` must fund this
+delivery: its `delivery_id`, `sender`, `recipient` and `driver` must all match
+the delivery record, and it must be `Locked`.
+
 **Errors:**
 - `NotAuthorized` - Caller is not assigned driver
 - `InvalidState` - Delivery not in Active state
+- `DeliveryNotFound` - No escrow exists for the delivery
+- `EscrowMismatch` - The escrow's delivery ID, sender, recipient or driver does not match the delivery
+- `EscrowNotLocked` - The matching escrow is not `Locked`
 
 **Events:** `DeliveryInTransit`
 

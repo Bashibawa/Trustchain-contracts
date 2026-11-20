@@ -44,6 +44,11 @@ export enum DeliveryErrorCode {
    * delivery is `InTransit` the sender can no longer cancel it.
    */
   TransitAlreadyStarted = 8,
+  /**
+   * The escrow stored under the delivery ID does not fund this delivery: its
+   * delivery ID, sender, recipient or assigned driver differs from the record.
+   */
+  EscrowMismatch = 9,
 }
 
 /**
@@ -58,6 +63,7 @@ export const DeliveryErrorCodes = {
   EscrowNotLocked: 6,
   InvalidIndexKind: 7,
   TransitAlreadyStarted: 8,
+  EscrowMismatch: 9,
 } as const;
 
 export interface CreateDeliveryParams {

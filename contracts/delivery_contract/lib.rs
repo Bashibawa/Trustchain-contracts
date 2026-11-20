@@ -131,6 +131,10 @@ pub enum DeliveryError {
     /// cancel and reclaim the escrow on their own: the delivery must be
     /// completed, disputed, or reclaimed after escrow expiry.
     TransitAlreadyStarted = 8,
+    /// The escrow stored under this delivery ID does not fund this delivery:
+    /// its `delivery_id`, `sender`, `recipient` or `driver` differs from the
+    /// `DeliveryRecord`. Such an escrow would pay or refund the wrong party.
+    EscrowMismatch = 9,
 }
 
 mod constants {
@@ -197,6 +201,32 @@ fn validate_delivery_metadata(
         return Err(DeliveryError::InvalidMetadata);
     }
     Ok(())
+}
+
+/// Returns `true` when `escrow` is the escrow funding `delivery`: same
+/// delivery ID, same sender and recipient, and — once a driver is assigned —
+/// the same driver.
+///
+/// Escrows are created by a separate call on a separate contract and are
+/// keyed only by delivery ID, so the record found under that ID is not
+/// guaranteed to belong to this delivery (for example when the escrow was
+/// created before a driver was assigned, or while the escrow contract had no
+/// delivery contract configured to cross-check against).
+fn escrow_matches_delivery(
+    delivery_id: DeliveryId,
+    delivery: &DeliveryRecord,
+    escrow: &shared_types::EscrowRecord,
+) -> bool {
+    if escrow.delivery_id != u64::from(delivery_id)
+        || escrow.sender != delivery.sender
+        || escrow.recipient != delivery.recipient
+    {
+        return false;
+    }
+    match &delivery.driver {
+        Some(driver) => *driver == escrow.driver,
+        None => true,
+    }
 }
 
 #[contract]
@@ -858,7 +888,9 @@ impl DeliveryContract {
     /// package for a delivery that has no escrow at all, or one whose escrow
     /// was already refunded (e.g. by `reclaim_expired_escrow`, which does not
     /// touch the delivery). A missing escrow surfaces as the escrow
-    /// contract's `DeliveryNotFound`; a present-but-not-`Locked` escrow
+    /// contract's `DeliveryNotFound`; an escrow whose delivery ID, sender,
+    /// recipient or driver differs from this delivery yields
+    /// `DeliveryError::EscrowMismatch`; a matching but not-`Locked` escrow
     /// yields the typed `DeliveryError::EscrowNotLocked`. This adds one
     /// cross-contract call to a hot path, which is a deliberate trade-off:
     /// the driver's assurance that funds exist is worth the extra read.
@@ -906,6 +938,13 @@ impl DeliveryContract {
             &Symbol::new(&env, "get_escrow"),
             soroban_sdk::vec![&env, u64::from(delivery_id).into_val(&env)],
         );
+        // The escrow must fund *this* delivery: same ID, sender, recipient
+        // and assigned driver. A Locked escrow for different parties would
+        // otherwise satisfy the funded precondition while paying, or
+        // refunding, the wrong actor.
+        if !escrow_matches_delivery(delivery_id, &delivery, &escrow) {
+            panic_with_error!(&env, DeliveryError::EscrowMismatch);
+        }
         if escrow.status != shared_types::EscrowStatus::Locked {
             panic_with_error!(&env, DeliveryError::EscrowNotLocked);
         }
