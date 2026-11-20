@@ -115,3 +115,47 @@ describe('SettlementClient getDriverPreference', () => {
     await expect(client().getDriverPreference(DRIVER)).resolves.toBeNull();
   });
 });
+
+describe('SettlementClient clearDriverPreference', () => {
+  it('targets clear_driver_preference with only the driver address', async () => {
+    const call = mockInvoker({ clear_driver_preference: [nativeToScVal(null)] });
+
+    await expect(client().clearDriverPreference(DRIVER)).resolves.toBeUndefined();
+
+    expect(call).toHaveBeenCalledTimes(1);
+    const [fn, args] = call.mock.calls[0];
+    expect(fn).toBe('clear_driver_preference');
+    expect(args).toHaveLength(1);
+    expect(decodeAddress(args[0] as xdr.ScVal)).toBe(DRIVER);
+  });
+
+  it('propagates a rejected clear (e.g. missing driver auth) to the caller', async () => {
+    jest
+      .spyOn(ContractInvoker.prototype, 'call')
+      .mockRejectedValue(new Error('Soroban simulation failed: Error(Auth, InvalidAction)'));
+
+    await expect(client().clearDriverPreference(DRIVER)).rejects.toThrow('Auth');
+  });
+
+  it('rejects a malformed driver address before touching the chain', async () => {
+    const call = mockInvoker({});
+
+    await expect(client().clearDriverPreference('not-an-address')).rejects.toThrow();
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it('round-trips set -> clear -> get back to null', async () => {
+    const call = mockInvoker({ get_driver_preference: [nativeToScVal(null)] });
+    const settlement = client();
+
+    await settlement.setDriverPreference({ driver: DRIVER, toToken: TOKEN });
+    await settlement.clearDriverPreference(DRIVER);
+    await expect(settlement.getDriverPreference(DRIVER)).resolves.toBeNull();
+
+    expect(call.mock.calls.map(([fn]) => fn)).toEqual([
+      'set_driver_preference',
+      'clear_driver_preference',
+      'get_driver_preference',
+    ]);
+  });
+});

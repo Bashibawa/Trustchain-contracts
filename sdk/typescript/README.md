@@ -139,6 +139,22 @@ const fleet = await fleetClient.getFleet(fleetId);
 console.log(fleet.drivers); // ['GC789...']
 ```
 
+### Manage Driver Payout Preferences
+
+```typescript
+import { SettlementClient } from '@trustchain/sdk';
+
+const settlement = new SettlementClient('CSTL...', invocation);
+
+// Driver signs; toToken must be a deployed token contract.
+await settlement.setDriverPreference({ driver: 'GC789...', toToken: 'CUSDC...' });
+await settlement.getDriverPreference('GC789...'); // 'CUSDC...'
+
+// Recover from a bad preference and fall back to the default escrow token.
+await settlement.clearDriverPreference('GC789...');
+await settlement.getDriverPreference('GC789...'); // null
+```
+
 ## Error Handling
 
 The SDK surfaces contract failures as typed error enums so callers can branch on
