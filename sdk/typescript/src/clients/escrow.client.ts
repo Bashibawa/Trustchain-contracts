@@ -229,6 +229,28 @@ export class EscrowClient {
   }
 
   /**
+   * Get a page of escrow IDs for `owner`, filtered by role.
+   *
+   * `kind` matches `contracts/escrow_contract/lib.rs::get_escrows_page`'s
+   * discriminant: 0 = sender, 1 = recipient, 2 = driver.
+   */
+  async getEscrowsPage(
+    owner: string,
+    kind: EscrowTypes.EscrowPartyKind,
+    offset: number,
+    limit: number,
+    options?: ContractInvokeOptions
+  ): Promise<bigint[]> {
+    return decodeIds(
+      await this.invoker.call(
+        'get_escrows_page',
+        [address(owner), u32(kind), u32(offset), u32(limit)],
+        options
+      )
+    );
+  }
+
+  /**
    * Get the total amount of `token` currently locked across all escrows.
    *
    * This is the protocol's solvency metric: it should always be backed by an
