@@ -143,6 +143,32 @@ if [ "$LOCAL_WASM_SHA256" != "$DEPLOYED_WASM_SHA256" ]; then
 fi
 echo "${GREEN}✓ On-chain WASM hash matches the local build ($LOCAL_WASM_SHA256)${NC}" >&2
 
+# Verify against a known-good release manifest, if one was supplied (#96).
+# RELEASE_WASM_SHA256SUMS points at a SHA256SUMS.txt produced by
+# .github/workflows/release.yml (the "Generate Checksums" step). If the
+# manifest records a hash for this contract, the just-deployed WASM must
+# match it exactly, catching a stale/mismatched deploy that used a build
+# artifact other than the one tagged for this release.
+if [ -n "${RELEASE_WASM_SHA256SUMS:-}" ]; then
+    if [ ! -f "$RELEASE_WASM_SHA256SUMS" ]; then
+        echo "${RED}❌ RELEASE_WASM_SHA256SUMS is set but file not found: $RELEASE_WASM_SHA256SUMS${NC}" >&2
+        exit 1
+    fi
+    EXPECTED_SHA256=$(grep -E "  ${CONTRACT_NAME}\.wasm\$" "$RELEASE_WASM_SHA256SUMS" | awk '{print $1}')
+    if [ -z "$EXPECTED_SHA256" ]; then
+        echo "${YELLOW}⚠ No entry for ${CONTRACT_NAME}.wasm in $RELEASE_WASM_SHA256SUMS; skipping release-hash check.${NC}" >&2
+    elif [ "$EXPECTED_SHA256" != "$DEPLOYED_WASM_SHA256" ]; then
+        echo "${RED}❌ Deployed WASM hash does not match the release artifact for $CONTRACT_NAME!${NC}" >&2
+        echo "   Release manifest ($RELEASE_WASM_SHA256SUMS): $EXPECTED_SHA256" >&2
+        echo "   Deployed on $NETWORK:                        $DEPLOYED_WASM_SHA256" >&2
+        echo "   This deploy does not correspond to the released build. Do not" >&2
+        echo "   record $CONTRACT_ID as the deployed address for this release." >&2
+        exit 1
+    else
+        echo "${GREEN}✓ Deployed WASM hash matches the release artifact ($EXPECTED_SHA256)${NC}" >&2
+    fi
+fi
+
 # Merge this contract's ID into any existing output file for this network,
 # so deploying contracts one at a time doesn't clobber previously deployed IDs.
 declare -A DEPLOYED_IDS
