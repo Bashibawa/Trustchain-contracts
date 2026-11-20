@@ -170,8 +170,45 @@ fn apply_freeze_funds(env: &Env, actor: &Address, delivery_id: u64) {
     }
 }
 
-fn calculate_fee(amount: i128, platform_fee_bps: u32) -> i128 {
-    amount.saturating_mul(platform_fee_bps as i128) / 10_000
+/// Basis-point denominator: 10_000 bps == 100%.
+const BPS_DENOMINATOR: i128 = 10_000;
+
+/// Overflow-safe `floor(amount * bps / 10_000)`.
+///
+/// The naive `amount * bps` product overflows `i128` for amounts above
+/// `i128::MAX / bps`; the previous `saturating_mul` implementation silently
+/// clamped that product, so very large escrows were charged (or split by) a
+/// value that no longer equalled `amount * bps / 10_000`. This splits
+/// `amount` into quotient and remainder of the denominator instead:
+///
+/// ```text
+/// amount = q * 10_000 + r          (0 <= r < 10_000)
+/// floor(amount * bps / 10_000) = q * bps + floor(r * bps / 10_000)
+/// ```
+///
+/// which is exact for every non-negative `amount` and never forms a product
+/// larger than `amount` when `bps <= 10_000`.
+///
+/// Returns `None` for unsupported inputs — a negative `amount`, a `bps`
+/// above 100%, or (defensively) any intermediate overflow — so callers can
+/// reject them instead of acting on a distorted value.
+fn checked_bps_share(amount: i128, bps: u32) -> Option<i128> {
+    if amount < 0 || bps as i128 > BPS_DENOMINATOR {
+        return None;
+    }
+    let bps = bps as i128;
+    let whole = (amount / BPS_DENOMINATOR).checked_mul(bps)?;
+    let partial = (amount % BPS_DENOMINATOR).checked_mul(bps)? / BPS_DENOMINATOR;
+    whole.checked_add(partial)
+}
+
+/// Platform fee owed on `amount` at `platform_fee_bps`.
+///
+/// Aborts the transaction with `EscrowError::ArithmeticOverflow` when the fee
+/// cannot be represented exactly (see `checked_bps_share`).
+fn calculate_fee(env: &Env, amount: i128, platform_fee_bps: u32) -> i128 {
+    checked_bps_share(amount, platform_fee_bps)
+        .unwrap_or_else(|| panic_with_error!(env, EscrowError::ArithmeticOverflow))
 }
 
 /// Validates a volume tier list before it is written to storage.
@@ -495,7 +532,7 @@ fn settle_holdback_escrow(env: &Env, delivery_id: u64, mut record: EscrowRecord)
 
     let sender_volume = EscrowContract::get_sender_volume(env.clone(), record.sender.clone());
     let effective_fee_bps = get_effective_fee_bps(env, base_fee_bps, sender_volume);
-    let platform_fee = calculate_fee(record.amount, effective_fee_bps);
+    let platform_fee = calculate_fee(env, record.amount, effective_fee_bps);
     let driver_amount = record.amount.saturating_sub(platform_fee);
 
     let sender_volume_key = DataKey::SenderVolume(record.sender.clone());
@@ -632,6 +669,10 @@ pub enum EscrowError {
     /// A batch operation (`create_escrows_batch`) exceeded `MAX_BATCH_SIZE`.
     BatchTooLarge = 12,
     InvalidSlippageTolerance = 13,
+    /// An escrow amount computation could not be represented exactly in
+    /// `i128` (fee / basis-point share, or the `TotalLocked` accumulator).
+    /// The transaction is aborted rather than acting on a saturated value.
+    ArithmeticOverflow = 14,
 }
 
 #[contracttype]
@@ -1570,7 +1611,7 @@ impl EscrowContract {
 
         let sender_volume = Self::get_sender_volume(env.clone(), record.sender.clone());
         let effective_fee_bps = get_effective_fee_bps(&env, base_fee_bps, sender_volume);
-        let platform_fee = calculate_fee(record.amount, effective_fee_bps);
+        let platform_fee = calculate_fee(&env, record.amount, effective_fee_bps);
         let driver_amount = record.amount.saturating_sub(platform_fee);
 
         let sender_volume_key = DataKey::SenderVolume(record.sender.clone());
@@ -1850,7 +1891,7 @@ impl EscrowContract {
                 .unwrap_or(0);
             let sender_volume = Self::get_sender_volume(env.clone(), record.sender.clone());
             let effective_fee_bps = get_effective_fee_bps(&env, base_fee_bps, sender_volume);
-            let platform_fee = calculate_fee(record.amount, effective_fee_bps);
+            let platform_fee = calculate_fee(&env, record.amount, effective_fee_bps);
             let driver_amount = record.amount.saturating_sub(platform_fee);
 
             let sender_volume_key = DataKey::SenderVolume(record.sender.clone());
@@ -1951,7 +1992,7 @@ impl EscrowContract {
             .unwrap_or(0);
         let sender_volume = Self::get_sender_volume(env.clone(), record.sender.clone());
         let effective_fee_bps = get_effective_fee_bps(&env, base_fee_bps, sender_volume);
-        let platform_fee = calculate_fee(driver_share_amount, effective_fee_bps);
+        let platform_fee = calculate_fee(&env, driver_share_amount, effective_fee_bps);
         let net_driver_amount = driver_share_amount.saturating_sub(platform_fee);
 
         let sender_volume_key = DataKey::SenderVolume(record.sender.clone());
