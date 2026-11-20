@@ -3,7 +3,6 @@ import {
   SorobanRpc,
   TransactionBuilder,
   Networks,
-  Keypair,
   nativeToScVal,
   scValToNative,
   Address,
@@ -46,11 +45,28 @@ export class DeliveryClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
   private networkPassphrase: string;
+  private sourceAccount: string;
 
-  constructor(contractId: string, rpcUrl: string, networkPassphrase: string = Networks.TESTNET) {
+  /**
+   * @param sourceAccount A funded account's public key, used only as the
+   * simulation source for read-only calls. Simulation previously used a
+   * freshly generated `Keypair.random()` account, which is never funded on
+   * any network and causes `server.getAccount()` to fail with a 404 before
+   * the read can even be simulated.
+   */
+  constructor(
+    contractId: string,
+    rpcUrl: string,
+    sourceAccount: string,
+    networkPassphrase: string = Networks.TESTNET,
+  ) {
     this.contract = new Contract(contractId);
     this.server = new SorobanRpc.Server(rpcUrl);
     this.networkPassphrase = networkPassphrase;
+    if (!sourceAccount) {
+      throw new Error('DeliveryClient requires a funded sourceAccount for read simulation');
+    }
+    this.sourceAccount = sourceAccount;
   }
 
   async getDeliveriesBySender(
@@ -106,8 +122,7 @@ export class DeliveryClient {
 
 
   private async invokeRead(method: string, args: xdr.ScVal[]): Promise<any[]> {
-    const source = Keypair.random();
-    const account = await this.server.getAccount(source.publicKey());
+    const account = await this.server.getAccount(this.sourceAccount);
     const tx = new TransactionBuilder(account, {
       fee: '100',
       networkPassphrase: this.networkPassphrase,
@@ -131,11 +146,26 @@ export class EscrowClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
   private networkPassphrase: string;
+  private sourceAccount: string;
 
-  constructor(contractId: string, rpcUrl: string, networkPassphrase: string = Networks.TESTNET) {
+  /**
+   * @param sourceAccount A funded account's public key, used only as the
+   * simulation source for read-only calls (see DeliveryClient above for why
+   * this replaced `Keypair.random()`).
+   */
+  constructor(
+    contractId: string,
+    rpcUrl: string,
+    sourceAccount: string,
+    networkPassphrase: string = Networks.TESTNET,
+  ) {
     this.contract = new Contract(contractId);
     this.server = new SorobanRpc.Server(rpcUrl);
     this.networkPassphrase = networkPassphrase;
+    if (!sourceAccount) {
+      throw new Error('EscrowClient requires a funded sourceAccount for read simulation');
+    }
+    this.sourceAccount = sourceAccount;
   }
 
   async getEscrowsBySender(
@@ -187,8 +217,7 @@ export class EscrowClient {
   }
 
   private async invokeRead(method: string, args: xdr.ScVal[]): Promise<any[]> {
-    const source = Keypair.random();
-    const account = await this.server.getAccount(source.publicKey());
+    const account = await this.server.getAccount(this.sourceAccount);
     const tx = new TransactionBuilder(account, {
       fee: '100',
       networkPassphrase: this.networkPassphrase,
