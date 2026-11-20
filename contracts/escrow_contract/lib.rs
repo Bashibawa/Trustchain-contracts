@@ -26,6 +26,13 @@ pub mod constants {
     pub const DEFAULT_ESCROW_EXPIRY_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
     pub const MAX_PLATFORM_FEE_BPS: u32 = 1000;
     pub const MAX_SLIPPAGE_TOLERANCE_BPS: u32 = 1000;
+    /// Documented upper bound of the per-sender settlement counter
+    /// (`get_sender_volume`). Once a sender reaches this value further
+    /// settlements still succeed — blocking them would trap escrowed funds —
+    /// but the counter stays pinned at the cap and every such settlement
+    /// publishes a `sender_volume_capped` event so the boundary is observable
+    /// on-chain instead of the count silently stopping.
+    pub const MAX_SENDER_VOLUME: u32 = u32::MAX;
     pub const SETTLEMENT_CONTRACT_TIMELOCK_SECONDS: u64 = 3 * 24 * 60 * 60; // 3 days
     /// Default time a recipient has, after confirming delivery (i.e. after
     /// `mark_holdback_escrow` moves an escrow into `Holdback`), to either
@@ -209,6 +216,49 @@ fn checked_bps_share(amount: i128, bps: u32) -> Option<i128> {
 fn calculate_fee(env: &Env, amount: i128, platform_fee_bps: u32) -> i128 {
     checked_bps_share(amount, platform_fee_bps)
         .unwrap_or_else(|| panic_with_error!(env, EscrowError::ArithmeticOverflow))
+}
+
+/// Topic of the event published when a settlement is not counted because
+/// the sender's volume is already at `constants::MAX_SENDER_VOLUME`.
+pub const SENDER_VOLUME_CAPPED: &str = "sender_volume_capped";
+
+/// Payload of the `sender_volume_capped` event.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SenderVolumeCapped {
+    pub sender: Address,
+    pub volume: u32,
+}
+
+/// Records one settlement against `sender`'s volume counter, given the
+/// `current` value the caller already read (and used for fee selection).
+///
+/// Increments by one up to `constants::MAX_SENDER_VOLUME`. At the cap the
+/// stored value is left unchanged and a `sender_volume_capped` event is
+/// published, making the boundary explicit rather than silently dropping the
+/// settlement from the count. The entry's TTL is extended on every call
+/// (Issue #460) so an active sender's accrued discount cannot expire.
+#[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
+fn record_sender_settlement(env: &Env, sender: &Address, current: u32) {
+    let next = if current < constants::MAX_SENDER_VOLUME {
+        current + 1
+    } else {
+        env.events().publish(
+            (Symbol::new(env, SENDER_VOLUME_CAPPED),),
+            SenderVolumeCapped {
+                sender: sender.clone(),
+                volume: current,
+            },
+        );
+        current
+    };
+    let key = DataKey::SenderVolume(sender.clone());
+    env.storage().persistent().set(&key, &next);
+    env.storage().persistent().extend_ttl(
+        &key,
+        ttl::LEDGER_TTL_THRESHOLD,
+        ttl::LEDGER_TTL_EXTEND_TO,
+    );
 }
 
 /// Reads the `TotalLocked` accumulator for `token` and returns it increased by
@@ -555,18 +605,9 @@ fn settle_holdback_escrow(env: &Env, delivery_id: u64, mut record: EscrowRecord)
     let platform_fee = calculate_fee(env, record.amount, effective_fee_bps);
     let driver_amount = record.amount.saturating_sub(platform_fee);
 
-    let sender_volume_key = DataKey::SenderVolume(record.sender.clone());
-    env.storage()
-        .persistent()
-        .set(&sender_volume_key, &sender_volume.saturating_add(1));
-    // Issue #460: the sender volume drives the volume-tier fee discount, so a
-    // silently expired entry would wipe an active sender's accrued discount.
-    // Every write must therefore extend the entry's TTL.
-    env.storage().persistent().extend_ttl(
-        &sender_volume_key,
-        ttl::LEDGER_TTL_THRESHOLD,
-        ttl::LEDGER_TTL_EXTEND_TO,
-    );
+    // Issue #460 TTL extension and the MAX_SENDER_VOLUME cap are handled
+    // by the shared helper.
+    record_sender_settlement(env, &record.sender, sender_volume);
 
     // Effects (state) are committed before the interaction (transfer)
     // below, per checks-effects-interactions.
@@ -1631,17 +1672,9 @@ impl EscrowContract {
         let platform_fee = calculate_fee(&env, record.amount, effective_fee_bps);
         let driver_amount = record.amount.saturating_sub(platform_fee);
 
-        let sender_volume_key = DataKey::SenderVolume(record.sender.clone());
-        env.storage()
-            .persistent()
-            .set(&sender_volume_key, &sender_volume.saturating_add(1));
-        // Issue #460: extend the volume entry's TTL so an active sender's
-        // accrued tier discount cannot silently expire.
-        env.storage().persistent().extend_ttl(
-            &sender_volume_key,
-            ttl::LEDGER_TTL_THRESHOLD,
-            ttl::LEDGER_TTL_EXTEND_TO,
-        );
+        // Issue #460 TTL extension and the MAX_SENDER_VOLUME cap are handled
+        // by the shared helper.
+        record_sender_settlement(&env, &record.sender, sender_volume);
 
         // Effects (state) are committed before the interaction (transfer)
         // below, per checks-effects-interactions.
@@ -1911,17 +1944,9 @@ impl EscrowContract {
             let platform_fee = calculate_fee(&env, record.amount, effective_fee_bps);
             let driver_amount = record.amount.saturating_sub(platform_fee);
 
-            let sender_volume_key = DataKey::SenderVolume(record.sender.clone());
-            env.storage()
-                .persistent()
-                .set(&sender_volume_key, &sender_volume.saturating_add(1));
-            // Issue #460: extend the volume entry's TTL so an active sender's
-            // accrued tier discount cannot silently expire.
-            env.storage().persistent().extend_ttl(
-                &sender_volume_key,
-                ttl::LEDGER_TTL_THRESHOLD,
-                ttl::LEDGER_TTL_EXTEND_TO,
-            );
+            // Issue #460 TTL extension and the MAX_SENDER_VOLUME cap are handled
+            // by the shared helper.
+            record_sender_settlement(&env, &record.sender, sender_volume);
 
             record.status = EscrowStatus::Released;
             Some((
@@ -2012,17 +2037,9 @@ impl EscrowContract {
         let platform_fee = calculate_fee(&env, driver_share_amount, effective_fee_bps);
         let net_driver_amount = driver_share_amount.saturating_sub(platform_fee);
 
-        let sender_volume_key = DataKey::SenderVolume(record.sender.clone());
-        env.storage()
-            .persistent()
-            .set(&sender_volume_key, &sender_volume.saturating_add(1));
-        // Issue #460: extend the volume entry's TTL so an active sender's
-        // accrued tier discount cannot silently expire.
-        env.storage().persistent().extend_ttl(
-            &sender_volume_key,
-            ttl::LEDGER_TTL_THRESHOLD,
-            ttl::LEDGER_TTL_EXTEND_TO,
-        );
+        // Issue #460 TTL extension and the MAX_SENDER_VOLUME cap are handled
+        // by the shared helper.
+        record_sender_settlement(&env, &record.sender, sender_volume);
 
         // Effects (state) are committed before the interactions (transfers)
         // below, per checks-effects-interactions.

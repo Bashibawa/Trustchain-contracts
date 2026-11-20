@@ -947,6 +947,12 @@ Returns the sender's payout count, incremented each time a payout is executed
 for the sender, used to select the applicable volume-discount tier. Returns `0`
 for a sender with no payouts yet.
 
+The counter is capped at `constants::MAX_SENDER_VOLUME` (`u32::MAX`). Payouts
+for a sender already at the cap still settle normally, but the count stays at
+the cap and each such payout publishes a `sender_volume_capped` event
+(`SenderVolumeCapped { sender, volume }`) so the boundary is visible to
+indexers instead of the counter silently stopping.
+
 **Parameters:**
 - `sender: Address` - Sender address
 

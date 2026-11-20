@@ -7557,3 +7557,105 @@ fn test_admin_freeze_funds_is_idempotent() {
 
     assert_eq!(client.get_escrow(&10405u64).status, EscrowStatus::Paused);
 }
+
+// ── Sender volume cap (get_sender_volume / settle_holdback_escrow) ───────────
+
+fn seed_sender_volume(env: &Env, contract_id: &Address, sender: &Address, value: u32) {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::SenderVolume(sender.clone()), &value);
+    });
+}
+
+/// `(sender, volume)` payloads of every `sender_volume_capped` event emitted so
+/// far in this test.
+fn sender_volume_capped_events(env: &Env) -> std::vec::Vec<SenderVolumeCapped> {
+    let topic = Symbol::new(env, SENDER_VOLUME_CAPPED);
+    let mut out = std::vec::Vec::new();
+    for raw in env.events().all().events().iter() {
+        let xdr::ContractEventBody::V0(body) = &raw.body;
+        let Some(first) = body.topics.first() else { continue };
+        let first = Val::try_from_val(env, first).expect("failed to decode topic");
+        if Symbol::try_from_val(env, &first).ok() != Some(topic.clone()) {
+            continue;
+        }
+        let data = Val::try_from_val(env, &body.data).expect("failed to decode event data");
+        out.push(data.try_into_val(env).expect("unexpected sender_volume_capped payload"));
+    }
+    out
+}
+
+#[test]
+fn test_sender_volume_increments_up_to_documented_cap() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 1000);
+    seed_sender_volume(&env, &contract_id, &sender, constants::MAX_SENDER_VOLUME - 1);
+
+    client.create_escrow(&sender, &recipient, &driver, &14_301u64, &token, &1000, &None);
+    client.release_escrow(&recipient, &14_301u64);
+
+    // One below the cap still counts normally and does not signal the cap.
+    assert_eq!(client.get_sender_volume(&sender), constants::MAX_SENDER_VOLUME);
+    assert!(sender_volume_capped_events(&env).is_empty());
+}
+
+#[test]
+fn test_sender_volume_at_cap_emits_event_and_settlement_still_succeeds() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 1000);
+    seed_sender_volume(&env, &contract_id, &sender, constants::MAX_SENDER_VOLUME);
+
+    // Holdback path (settle_holdback_escrow).
+    client.create_escrow(&sender, &recipient, &driver, &14_302u64, &token, &1000, &None);
+    let delivery_contract = Address::generate(&env);
+    client.set_delivery_contract(&admin, &delivery_contract);
+    env.ledger().set_timestamp(
+        env.ledger().timestamp() + shared_types::PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS,
+    );
+    client.confirm_delivery_contract();
+    client.mark_holdback_escrow(&delivery_contract, &14_302u64);
+    client.release_holdback_escrow(&recipient, &14_302u64);
+
+    // The settlement is not blocked: funds reach the driver.
+    assert_eq!(client.get_escrow(&14_302u64).status, EscrowStatus::Released);
+    assert_eq!(balance(&env, &token, &driver), 1000);
+
+    // The counter stays pinned at the cap (no wrap to 0) and the dropped
+    // increment is reported explicitly.
+    assert_eq!(client.get_sender_volume(&sender), constants::MAX_SENDER_VOLUME);
+    let capped = sender_volume_capped_events(&env);
+    assert_eq!(
+        capped,
+        std::vec![SenderVolumeCapped {
+            sender: sender.clone(),
+            volume: constants::MAX_SENDER_VOLUME,
+        }]
+    );
+    // TTL is still extended at the cap (Issue #460).
+    assert_eq!(
+        sender_volume_ttl(&env, &contract_id, &sender),
+        EXPECTED_VOLUME_TTL
+    );
+}
+
