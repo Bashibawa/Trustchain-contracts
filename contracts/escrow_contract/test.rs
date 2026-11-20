@@ -110,7 +110,7 @@ impl MaliciousSettlementContract {
         _amount: i128,
         _min_amount_out: i128,
         _deadline: u64,
-    ) {
+    ) -> i128 {
         let target: Address = env
             .storage()
             .instance()
@@ -121,6 +121,7 @@ impl MaliciousSettlementContract {
             &Symbol::new(&env, "release_escrow"),
             soroban_sdk::vec![&env, _recipient.into_val(&env), 900u64.into_val(&env)],
         );
+        0
     }
 }
 
@@ -173,7 +174,7 @@ impl MaliciousPreferenceContract {
         _amount: i128,
         _min_amount_out: i128,
         _deadline: u64,
-    ) {
+    ) -> i128 {
         let target: Address = env
             .storage()
             .instance()
@@ -184,6 +185,7 @@ impl MaliciousPreferenceContract {
             &Symbol::new(&env, "release_escrow"),
             soroban_sdk::vec![&env, _recipient.into_val(&env), 0u64.into_val(&env)],
         );
+        0
     }
 }
 
@@ -7417,12 +7419,13 @@ impl RecordingSettlementContract {
         amount: i128,
         _min_amount_out: i128,
         _deadline: u64,
-    ) {
+    ) -> i128 {
         caller.require_auth();
         env.storage().instance().set(
             &Symbol::new(&env, "last_swap"),
             &(caller, delivery_id, to_token, recipient, amount),
         );
+        amount
     }
 }
 

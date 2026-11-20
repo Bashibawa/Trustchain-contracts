@@ -113,6 +113,7 @@ pub mod events {
     pub const SETTLEMENT_CONTRACT_PROPOSED: &str = "settlement_contract_proposed";
     pub const SETTLEMENT_CONTRACT_UPDATED: &str = "settlement_contract_updated";
     pub const DRIVER_PREFERENCE_UPDATED: &str = "driver_preference_updated";
+    pub const SETTLEMENT_SWAP_EXECUTED: &str = "settlement_swap_executed";
     pub const ESCROW_CONTRACT_UPDATED: &str = "escrow_contract_updated";
     pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
     pub const PROTOCOL_PAUSE_STATUS_CHANGED: &str = "protocol_pause_status_changed";
@@ -321,6 +322,14 @@ pub mod events {
     /// can track driver payout preference changes (Issue #589).
     pub fn driver_preference_updated(env: &Env) -> Symbol {
         Symbol::new(env, DRIVER_PREFERENCE_UPDATED)
+    }
+
+    /// Emitted by `settlement_contract::execute_settlement_swap` after a
+    /// router swap succeeds, binding the measured output to the escrow
+    /// delivery it pays so payments can be reconciled without relying on
+    /// router-specific events.
+    pub fn settlement_swap_executed(env: &Env) -> Symbol {
+        Symbol::new(env, SETTLEMENT_SWAP_EXECUTED)
     }
 
     /// Emitted by `settlement_contract::set_escrow_contract` so indexers can
@@ -649,6 +658,27 @@ pub struct DriverPreferenceUpdatedEvent {
     pub target_token: Address,
     /// Ledger timestamp of the update.
     pub timestamp: u64,
+}
+
+/// Payload of `settlement_swap_executed`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettlementSwapExecutedEvent {
+    /// Escrow contract that requested the swap (the authenticated caller).
+    pub escrow_contract: Address,
+    /// Escrow delivery ID the swap pays out.
+    pub delivery_id: u64,
+    /// Token sold (the escrow's settlement token).
+    pub from_token: Address,
+    /// Token bought (the driver's preferred payout asset).
+    pub to_token: Address,
+    /// Address credited with `to_token`.
+    pub recipient: Address,
+    /// Exact `from_token` amount consumed by the router.
+    pub amount_in: i128,
+    /// Actual `to_token` amount received by `recipient`, measured as the
+    /// recipient's balance delta rather than the router's reported value.
+    pub amount_out: i128,
 }
 
 #[contracttype]
@@ -1449,6 +1479,7 @@ mod test {
             SETTLEMENT_CONTRACT_PROPOSED => settlement_contract_proposed,
             SETTLEMENT_CONTRACT_UPDATED => settlement_contract_updated,
             DRIVER_PREFERENCE_UPDATED => driver_preference_updated,
+            SETTLEMENT_SWAP_EXECUTED => settlement_swap_executed,
             ESCROW_CONTRACT_UPDATED => escrow_contract_updated,
             ADMIN_TRANSFERRED => admin_transferred,
             PROTOCOL_PAUSE_STATUS_CHANGED => protocol_pause_status_changed,

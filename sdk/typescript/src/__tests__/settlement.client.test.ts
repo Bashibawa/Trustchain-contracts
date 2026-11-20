@@ -130,9 +130,11 @@ describe('SettlementClient executeSettlementSwap', () => {
   };
 
   it('targets execute_settlement_swap with the encoded swap args including delivery_id', async () => {
-    const call = mockInvoker({ execute_settlement_swap: [nativeToScVal(null)] });
+    const call = mockInvoker({ execute_settlement_swap: [nativeToScVal(1_900n, { type: 'i128' })] });
 
-    await client().executeSettlementSwap(swapParams);
+    const amountOut = await client().executeSettlementSwap(swapParams);
+
+    expect(amountOut).toBe(1_900n);
 
     const [fn, args] = call.mock.calls[0];
     expect(fn).toBe('execute_settlement_swap');

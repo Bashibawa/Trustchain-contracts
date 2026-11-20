@@ -407,7 +407,7 @@ fn payout_driver(
                     &settlement_addr,
                     &amount,
                 );
-                let _: () = env.invoke_contract(
+                let _amount_out: i128 = env.invoke_contract(
                     &settlement_addr,
                     &Symbol::new(env, "execute_settlement_swap"),
                     soroban_sdk::vec![

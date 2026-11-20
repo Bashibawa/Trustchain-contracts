@@ -21,3 +21,22 @@ export interface ExecuteSettlementSwapParams {
   /** Unix timestamp; must be within 300 seconds of the current ledger time. */
   deadline: bigint | number;
 }
+
+/**
+ * Payload of the `settlement_swap_executed` event emitted by
+ * `execute_settlement_swap`. Binds the swap output to the escrow delivery it
+ * pays, so off-chain reconciliation does not depend on router events.
+ */
+export interface SettlementSwapExecutedEvent {
+  escrowContract: string;
+  deliveryId: bigint;
+  fromToken: string;
+  toToken: string;
+  recipient: string;
+  /** Exact `fromToken` amount consumed by the router. */
+  amountIn: bigint;
+  /** Actual `toToken` amount received by `recipient` (measured balance delta). */
+  amountOut: bigint;
+}
+
+export const SETTLEMENT_SWAP_EXECUTED_EVENT = 'settlement_swap_executed';

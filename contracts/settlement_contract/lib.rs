@@ -2,7 +2,7 @@
 
 use shared_types::{
     is_admin, DriverPreferenceUpdatedEvent, EscrowContractUpdatedEvent, TrustchainError,
-    PendingPeerContractChange, StorageKey,
+    PendingPeerContractChange, SettlementSwapExecutedEvent, StorageKey,
 };
 
 // Settlement contract for cross-border currency swaps through an admin-configured router.
@@ -238,6 +238,10 @@ impl SettlementContract {
     /// supplied by `caller`, which must authenticate and must be the
     /// configured escrow contract, so the identifier is attributable to the
     /// escrow that holds the record rather than to an arbitrary third party.
+    ///
+    /// On success, publishes `settlement_swap_executed` with the token pair,
+    /// recipient, consumed input, measured output and escrow reference, and
+    /// returns the measured output amount.
     pub fn execute_settlement_swap(
         env: Env,
         caller: Address,
@@ -248,7 +252,7 @@ impl SettlementContract {
         amount: i128,
         min_amount_out: i128,
         deadline: u64,
-    ) {
+    ) -> i128 {
         caller.require_auth();
 
         env.storage()
@@ -296,7 +300,10 @@ impl SettlementContract {
 
         input_token.approve(&current_contract, &router, &amount, &expiration_ledger);
 
-        let amount_out: i128 = env.invoke_contract(
+        let output_token = soroban_sdk::token::Client::new(&env, &to_token);
+        let recipient_out_before = output_token.balance(&recipient);
+
+        let reported_amount_out: i128 = env.invoke_contract(
             &router,
             &soroban_sdk::Symbol::new(&env, "swap_exact_tokens_for_tokens"),
             soroban_sdk::vec![
@@ -310,12 +317,33 @@ impl SettlementContract {
                 deadline.into_val(&env),
             ],
         );
-        if amount_out < min_amount_out {
-            panic_with_error!(&env, SettlementError::SwapOutputBelowMinimum);
-        }
         if input_token.balance(&current_contract) != balance_before - amount {
             panic_with_error!(&env, SettlementError::SwapInputNotConsumed);
         }
+        // Measure what the recipient actually received instead of trusting
+        // the router's return value; both must clear the slippage floor.
+        let amount_out = output_token
+            .balance(&recipient)
+            .checked_sub(recipient_out_before)
+            .unwrap_or_else(|| panic_with_error!(&env, SettlementError::InvalidSwapParameters));
+        if amount_out < min_amount_out || reported_amount_out < min_amount_out {
+            panic_with_error!(&env, SettlementError::SwapOutputBelowMinimum);
+        }
+
+        env.events().publish(
+            (shared_types::events::settlement_swap_executed(&env),),
+            SettlementSwapExecutedEvent {
+                escrow_contract: caller,
+                delivery_id,
+                from_token,
+                to_token,
+                recipient,
+                amount_in: amount,
+                amount_out,
+            },
+        );
+
+        amount_out
     }
 }
 

@@ -33,11 +33,15 @@ export class SettlementClient {
     await this.invoker.call('set_driver_preference', [address(params.driver), address(params.toToken)], options);
   }
 
+  /**
+   * Execute a settlement swap. Resolves to the measured output amount the
+   * recipient received; the contract also emits `settlement_swap_executed`.
+   */
   async executeSettlementSwap(
     params: SettlementTypes.ExecuteSettlementSwapParams,
     options?: ContractInvokeOptions
-  ): Promise<void> {
-    await this.invoker.call(
+  ): Promise<bigint> {
+    const amountOut = await this.invoker.call(
       'execute_settlement_swap',
       [
         address(params.caller),
@@ -51,5 +55,6 @@ export class SettlementClient {
       ],
       options
     );
+    return BigInt(amountOut as bigint);
   }
 }

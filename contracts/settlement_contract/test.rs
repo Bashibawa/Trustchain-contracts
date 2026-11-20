@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+extern crate std;
+
 use super::*;
 use soroban_sdk::{
     contract, contractimpl,
@@ -483,4 +485,157 @@ fn test_execute_settlement_swap_requires_escrow_auth() {
         &escrow, &7u64, &from_token, &to_token, &recipient, &100i128, &90i128, &300u64,
     );
     assert!(result.is_err());
+}
+
+// ── settlement_swap_executed event ─────────────────────────────────────────
+
+/// Router whose delivered and reported output are set independently, so tests
+/// can model honest, under-delivering and lying routers.
+#[contract]
+struct ConfigurableSwapRouter;
+
+#[contractimpl]
+impl ConfigurableSwapRouter {
+    pub fn configure(env: Env, delivered: i128, reported: i128) {
+        env.storage().instance().set(&soroban_sdk::symbol_short!("deliv"), &delivered);
+        env.storage().instance().set(&soroban_sdk::symbol_short!("report"), &reported);
+    }
+
+    pub fn swap_exact_tokens_for_tokens(
+        env: Env,
+        caller: Address,
+        from_token: Address,
+        to_token: Address,
+        recipient: Address,
+        amount: i128,
+        _min_amount_out: i128,
+        _deadline: u64,
+    ) -> i128 {
+        let router = env.current_contract_address();
+        token::Client::new(&env, &from_token).transfer_from(&router, &caller, &router, &amount);
+        let delivered: i128 = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("deliv"))
+            .unwrap();
+        if delivered > 0 {
+            token::Client::new(&env, &to_token).transfer(&router, &recipient, &delivered);
+        }
+        env.storage()
+            .instance()
+            .get(&soroban_sdk::symbol_short!("report"))
+            .unwrap()
+    }
+}
+
+struct SwapFixture {
+    env: Env,
+    client: SettlementContractClient<'static>,
+    escrow: Address,
+    from_token: Address,
+    to_token: Address,
+    recipient: Address,
+}
+
+fn swap_fixture(delivered: i128, reported: i128) -> SwapFixture {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SettlementContract);
+    let client = SettlementContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let escrow = Address::generate(&env);
+    let router = env.register_contract(None, ConfigurableSwapRouter);
+    ConfigurableSwapRouterClient::new(&env, &router).configure(&delivered, &reported);
+    let from_token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    let to_token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    let recipient = Address::generate(&env);
+
+    client.init(&admin, &escrow);
+    client.set_swap_router(&admin, &router);
+    token::StellarAssetClient::new(&env, &from_token).mint(&contract_id, &100);
+    token::StellarAssetClient::new(&env, &to_token).mint(&router, &1_000);
+
+    SwapFixture { env, client, escrow, from_token, to_token, recipient }
+}
+
+fn swap_events(env: &Env) -> std::vec::Vec<SettlementSwapExecutedEvent> {
+    use soroban_sdk::{testutils::Events as _, xdr, TryFromVal, Val};
+    let topic = shared_types::events::settlement_swap_executed(env);
+    let mut out = std::vec::Vec::new();
+    for raw in env.events().all().events() {
+        let xdr::ContractEventBody::V0(body) = raw.body.clone();
+        let Some(first) = body.topics.first() else { continue };
+        let Ok(sym) = soroban_sdk::Symbol::try_from_val(env, first) else { continue };
+        if sym != topic {
+            continue;
+        }
+        let data = Val::try_from_val(env, &body.data).unwrap();
+        out.push(SettlementSwapExecutedEvent::try_from_val(env, &data).unwrap());
+    }
+    out
+}
+
+#[test]
+fn test_execute_settlement_swap_emits_event_with_measured_output() {
+    let f = swap_fixture(180, 180);
+
+    let returned =
+        f.client
+            .execute_settlement_swap(&f.escrow, &55u64, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300);
+
+    assert_eq!(returned, 180);
+    let events = swap_events(&f.env);
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0],
+        SettlementSwapExecutedEvent {
+            escrow_contract: f.escrow.clone(),
+            delivery_id: 55,
+            from_token: f.from_token.clone(),
+            to_token: f.to_token.clone(),
+            recipient: f.recipient.clone(),
+            amount_in: 100,
+            amount_out: 180,
+        }
+    );
+    assert_eq!(token::Client::new(&f.env, &f.to_token).balance(&f.recipient), 180);
+}
+
+/// A router that reports a healthy output but under-delivers to the recipient
+/// is rejected on the measured amount, and no settlement event is emitted.
+#[test]
+fn test_execute_settlement_swap_rejects_router_that_overreports_output() {
+    let f = swap_fixture(100, 500);
+
+    let result = f.client.try_execute_settlement_swap(
+        &f.escrow, &56u64, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300,
+    );
+
+    match result {
+        Err(Ok(err)) => assert_eq!(err, SettlementError::SwapOutputBelowMinimum.into()),
+        _ => panic!("Expected SwapOutputBelowMinimum for an under-delivering router"),
+    }
+    assert!(swap_events(&f.env).is_empty());
+    assert_eq!(token::Client::new(&f.env, &f.to_token).balance(&f.recipient), 0);
+}
+
+/// Boundary: output exactly equal to `min_amount_out` is accepted and the
+/// event reports that exact amount.
+#[test]
+fn test_execute_settlement_swap_accepts_output_equal_to_minimum() {
+    let f = swap_fixture(150, 150);
+
+    let returned = f.client.execute_settlement_swap(
+        &f.escrow, &57u64, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300,
+    );
+
+    assert_eq!(returned, 150);
+    let events = swap_events(&f.env);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].amount_out, 150);
+    assert_eq!(events[0].delivery_id, 57);
 }

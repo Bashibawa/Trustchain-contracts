@@ -3097,11 +3097,29 @@ Intended to integrate with the Stellar DEX or a liquidity pool to convert
 - `SwapRouterNotConfigured` - No router has been configured.
 - `InvalidSwapParameters` - Amount, token pair, or minimum output is invalid.
 - `InsufficientSwapBalance` - Settlement does not hold the requested input.
-- `SwapOutputBelowMinimum` - Router output is below `min_amount_out`.
+- `SwapOutputBelowMinimum` - The recipient's measured `to_token` balance
+  increase, or the router-reported output, is below `min_amount_out`.
 - `SwapInputNotConsumed` - Router did not consume the exact approved input.
 - `InvalidSwapDeadline` - Deadline is expired or exceeds the 300-second window.
 
-**Returns:** `()`
+**Events:** `settlement_swap_executed` — `SettlementSwapExecutedEvent`
+```rust
+pub struct SettlementSwapExecutedEvent {
+    pub escrow_contract: Address, // authenticated caller
+    pub delivery_id: u64,         // escrow record this swap pays
+    pub from_token: Address,
+    pub to_token: Address,
+    pub recipient: Address,
+    pub amount_in: i128,          // exact input consumed by the router
+    pub amount_out: i128,         // recipient's measured to_token balance delta
+}
+```
+Emitted only when the swap succeeds; a rejected swap emits nothing. Use
+`(escrow_contract, delivery_id)` to join the payout to the escrow's
+`escrow_released` / `dispute_resolved_split` event without relying on
+router-specific events.
+
+**Returns:** `i128` — the measured `amount_out`.
 
 #### `get_driver_fleet_status`
 Get driver's status in a fleet.
