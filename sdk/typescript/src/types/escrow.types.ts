@@ -39,12 +39,6 @@ export interface SetVolumeTiersParams {
   tiers: VolumeTier[];
 }
 
-export interface SweepUntrackedBalanceParams {
-  admin: string;
-  token: string;
-  recipient: string;
-}
-
 export interface CreateEscrowParams {
   sender: string;
   recipient: string;

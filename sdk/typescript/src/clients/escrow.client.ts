@@ -53,34 +53,6 @@ export class EscrowClient {
   }
 
   /**
-   * Get the total amount of a token currently locked in escrows
-   */
-  async getTotalLocked(token: string, options?: ContractInvokeOptions): Promise<bigint> {
-    return BigInt(String(await this.invoker.call('get_total_locked', [address(token)], options)));
-  }
-
-  /**
-   * Get the token balance held by the contract but not tracked as escrowed
-   */
-  async getUntrackedBalance(token: string, options?: ContractInvokeOptions): Promise<bigint> {
-    return BigInt(String(await this.invoker.call('get_untracked_balance', [address(token)], options)));
-  }
-
-  /**
-   * Sweep untracked token balance to a recipient (admin only)
-   */
-  async sweepUntrackedBalance(
-    params: EscrowTypes.SweepUntrackedBalanceParams,
-    options?: ContractInvokeOptions
-  ): Promise<bigint> {
-    return BigInt(String(await this.invoker.call(
-      'sweep_untracked_balance',
-      [address(params.admin), address(params.token), address(params.recipient)],
-      options
-    )));
-  }
-
-  /**
    * Set volume thresholds and fee discounts for high-volume senders (admin only)
    */
   async setVolumeTiers(
