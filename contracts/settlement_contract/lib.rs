@@ -264,6 +264,10 @@ impl SettlementContract {
 
     /// Swap escrow-funded tokens through the configured router.
     ///
+    /// The `amount` of `from_token` is pulled from `caller` (the escrow) at
+    /// the start of the swap, so the escrow must authorize that transfer as a
+    /// sub-invocation (see `escrow_contract::payout_driver`).
+    ///
     /// `delivery_id` identifies the escrow record this swap pays out. It is
     /// supplied by `caller`, which must authenticate and must be the
     /// configured escrow contract, so the identifier is attributable to the
@@ -353,7 +357,12 @@ impl SettlementContract {
             panic_with_error!(&env, SettlementError::InvalidSwapRecipient);
         }
 
+        // Pull the input from the escrow inside this call frame. If anything
+        // below fails, the whole frame — including this transfer — is rolled
+        // back, so a failed swap can never strand escrow funds here. The
+        // escrow pre-authorizes exactly this transfer.
         let input_token = soroban_sdk::token::Client::new(&env, &from_token);
+        input_token.transfer(&caller, &current_contract, &amount);
         let balance_before = input_token.balance(&current_contract);
         if balance_before < amount {
             panic_with_error!(&env, SettlementError::InsufficientSwapBalance);

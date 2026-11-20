@@ -114,6 +114,7 @@ pub mod events {
     pub const SETTLEMENT_CONTRACT_UPDATED: &str = "settlement_contract_updated";
     pub const DRIVER_PREFERENCE_UPDATED: &str = "driver_preference_updated";
     pub const SETTLEMENT_SWAP_EXECUTED: &str = "settlement_swap_executed";
+    pub const SETTLEMENT_SWAP_FALLBACK: &str = "settlement_swap_fallback";
     pub const ESCROW_CONTRACT_UPDATED: &str = "escrow_contract_updated";
     pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
     pub const PROTOCOL_PAUSE_STATUS_CHANGED: &str = "protocol_pause_status_changed";
@@ -330,6 +331,13 @@ pub mod events {
     /// router-specific events.
     pub fn settlement_swap_executed(env: &Env) -> Symbol {
         Symbol::new(env, SETTLEMENT_SWAP_EXECUTED)
+    }
+
+    /// Emitted by `escrow_contract` when a driver's preferred-asset swap
+    /// could not be performed and the payout fell back to a direct transfer
+    /// of the escrow token, so the release still completes.
+    pub fn settlement_swap_fallback(env: &Env) -> Symbol {
+        Symbol::new(env, SETTLEMENT_SWAP_FALLBACK)
     }
 
     /// Emitted by `settlement_contract::set_escrow_contract` so indexers can
@@ -681,6 +689,38 @@ pub struct SettlementSwapExecutedEvent {
     /// Actual `to_token` amount received by `recipient`, measured as the
     /// recipient's balance delta rather than the router's reported value.
     pub amount_out: i128,
+}
+
+/// Why a preferred-asset payout fell back to a direct transfer.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum SettlementFallbackReason {
+    /// `get_driver_preference` on the settlement contract failed.
+    PreferenceLookupFailed = 0,
+    /// `execute_settlement_swap` failed (router outage, expired approval,
+    /// slippage, binding check, ...). Its state changes were rolled back.
+    SwapFailed = 1,
+}
+
+/// Payload of `settlement_swap_fallback`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettlementSwapFallbackEvent {
+    /// Escrow delivery ID whose payout fell back.
+    pub delivery_id: u64,
+    /// Driver whose payout this is.
+    pub driver: Address,
+    /// Address that received the direct transfer.
+    pub payout_address: Address,
+    /// Escrow token that was transferred directly.
+    pub token: Address,
+    /// Driver's preferred asset, when it could be read.
+    pub preferred_asset: Option<Address>,
+    /// Amount transferred directly.
+    pub amount: i128,
+    /// Why the swap path was not used.
+    pub reason: SettlementFallbackReason,
 }
 
 #[contracttype]
@@ -1482,6 +1522,7 @@ mod test {
             SETTLEMENT_CONTRACT_UPDATED => settlement_contract_updated,
             DRIVER_PREFERENCE_UPDATED => driver_preference_updated,
             SETTLEMENT_SWAP_EXECUTED => settlement_swap_executed,
+            SETTLEMENT_SWAP_FALLBACK => settlement_swap_fallback,
             ESCROW_CONTRACT_UPDATED => escrow_contract_updated,
             ADMIN_TRANSFERRED => admin_transferred,
             PROTOCOL_PAUSE_STATUS_CHANGED => protocol_pause_status_changed,
