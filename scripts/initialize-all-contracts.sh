@@ -6,6 +6,14 @@
 set -e
 
 NETWORK=${1:-testnet}
+case "$NETWORK" in
+    testnet|mainnet|futurenet) ;;
+    *)
+        echo "❌ Unsupported network: '$NETWORK'" >&2
+        echo "   Valid networks: testnet, mainnet, futurenet" >&2
+        exit 1
+        ;;
+esac
 # Mode: "init" (default) runs the full initialization + peer-contract
 # proposal flow below. "confirm-peers" instead confirms every timelocked
 # peer-contract pointer that was proposed by an earlier "init" run, once the
