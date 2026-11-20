@@ -61,9 +61,34 @@ if ! stellar keys address "$DEPLOYER_IDENTITY" &> /dev/null; then
     exit 1
 fi
 
-# Parse contract IDs from JSON
+# Parse contract IDs from JSON.
+#
+# Previously this grepped "$1": "..." over the whole file, which only
+# happened to work because the manifest's top-level keys (network,
+# deployed_at, deployer_address) never collide with a contract name. That
+# breaks the moment the "contracts" object is nested inside anything else,
+# or a sibling top-level key reuses a contract's name (e.g. a future
+# "previous_contracts" block) - the regex can't tell which object a match
+# came from. Instead, first isolate the body of the top-level "contracts"
+# object (from its opening "{" to its matching closing "}", tracking brace
+# depth) and only look up keys inside that slice.
+CONTRACTS_BLOCK=$(awk '
+    /"contracts"[[:space:]]*:[[:space:]]*\{/ { in_block=1 }
+    in_block {
+        for (i = 1; i <= length($0); i++) {
+            c = substr($0, i, 1)
+            if (c == "{") { depth++; if (depth == 1) next }
+            if (c == "}") {
+                depth--
+                if (depth == 0) { in_block = 0; exit }
+            }
+        }
+        if (in_block) print
+    }
+' "$CONTRACT_IDS_FILE")
+
 get_contract_id() {
-    grep -o "\"$1\": *\"[^\"]*\"" "$CONTRACT_IDS_FILE" | grep -o '"[^"]*"$' | tr -d '"'
+    echo "$CONTRACTS_BLOCK" | grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | grep -o '"[^"]*"$' | tr -d '"'
 }
 
 ESCROW_ID=$(get_contract_id "escrow_contract")
