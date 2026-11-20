@@ -44,8 +44,11 @@ jobs:
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
     - name: Install Stellar CLI
+      # Pinned to the same version documented in docs/DEPLOYMENT.md so a
+      # fresh stellar-cli release can't silently change deploy behavior
+      # between runs of this workflow (#99).
       run: |
-        cargo install --locked stellar-cli --features opt
+        cargo install --locked stellar-cli --version 21.5.0 --features opt
 
     - name: Build Contracts
       run: cargo build --locked --target wasm32v1-none --release
