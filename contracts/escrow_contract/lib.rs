@@ -70,7 +70,7 @@ fn require_dispute_resolution_caller(env: &Env, caller: &Address, amount: i128) 
 
     caller.require_auth();
     require_admin(env, caller);
-    if amount >= HIGH_VALUE_DISPUTE_THRESHOLD {
+    if amount >= shared_types::HIGH_VALUE_DISPUTE_THRESHOLD {
         panic_with_error!(env, TrustchainError::Unauthorized);
     }
 }
@@ -632,6 +632,10 @@ pub enum EscrowError {
     /// A batch operation (`create_escrows_batch`) exceeded `MAX_BATCH_SIZE`.
     BatchTooLarge = 12,
     InvalidSlippageTolerance = 13,
+    /// No peer-contract address change is waiting for confirmation.
+    NoPendingContractChange = 14,
+    /// A peer-contract address change is still within its review period.
+    ContractChangeTimelockNotElapsed = 15,
 }
 
 #[contracttype]
@@ -951,7 +955,7 @@ impl EscrowContract {
             .remove(&DataKey::FleetManagementContract);
         extend_instance_ttl(&env);
         env.events().publish(
-            (Symbol::new(&env, "fleet_management_contract_cleared"),),
+            (Symbol::new(&env, "fleet_contract_cleared"),),
             (admin, env.ledger().timestamp()),
         );
     }
@@ -1015,7 +1019,7 @@ impl EscrowContract {
         );
         extend_instance_ttl(&env);
         env.events().publish(
-            (Symbol::new(&env, "delivery_contract_change_proposed"),),
+            (Symbol::new(&env, "delivery_contract_proposed"),),
             (delivery_contract, activates_at),
         );
     }
@@ -2093,7 +2097,7 @@ impl EscrowContract {
         if new_window_seconds < constants::MIN_HOLDBACK_WINDOW_SECONDS
             || new_window_seconds > constants::MAX_HOLDBACK_WINDOW_SECONDS
         {
-            panic_with_error!(&env, EscrowError::InvalidState);
+            panic_with_error!(&env, TrustchainError::InvalidState);
         }
         env.storage()
             .instance()
