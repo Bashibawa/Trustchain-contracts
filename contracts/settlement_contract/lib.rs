@@ -234,6 +234,12 @@ impl SettlementContract {
     }
 
     /// Swap escrow-funded tokens through the configured router.
+    ///
+    /// The router is approved for exactly `amount` of `from_token` for the
+    /// duration of the call, and that allowance is reset to zero as soon as
+    /// the router returns. After a successful swap the router therefore holds
+    /// no residual allowance; any failure reverts the approval with the rest
+    /// of the transaction.
     pub fn execute_settlement_swap(
         env: Env,
         caller: Address,
@@ -305,6 +311,12 @@ impl SettlementContract {
                 deadline.into_val(&env),
             ],
         );
+
+        // Revoke any residual allowance so the router never retains spend
+        // rights over settlement funds once the swap returns, regardless of
+        // how much of the approved amount it actually consumed.
+        input_token.approve(&current_contract, &router, &0, &env.ledger().sequence());
+
         if amount_out < min_amount_out {
             panic_with_error!(&env, SettlementError::SwapOutputBelowMinimum);
         }

@@ -3088,6 +3088,12 @@ Intended to integrate with the Stellar DEX or a liquidity pool to convert
 
 **Authorization:** Caller (must sign)
 
+**Allowance lifecycle:** the router is approved for exactly `amount` of
+`from_token`, expiring at the next ledger, and that allowance is reset to zero
+as soon as the router returns. After a successful swap the router holds no
+residual allowance over settlement funds; on any failure the approval reverts
+with the rest of the transaction.
+
 **Errors:**
 - `SwapRouterNotConfigured` - No router has been configured.
 - `InvalidSwapParameters` - Amount, token pair, or minimum output is invalid.

@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+extern crate std;
+
 use super::*;
 use soroban_sdk::{
     contract, contractimpl,
@@ -34,6 +36,107 @@ impl MockSwapRouter {
         token::Client::new(&env, &to_token).transfer(&router, &recipient, &amount_out);
         amount_out
     }
+}
+
+/// Router that only pulls half of the approved input, leaving a residual
+/// allowance behind if the settlement contract did not revoke it.
+#[contract]
+struct MockPartialSwapRouter;
+
+#[contractimpl]
+impl MockPartialSwapRouter {
+    pub fn swap_exact_tokens_for_tokens(
+        env: Env,
+        caller: Address,
+        from_token: Address,
+        to_token: Address,
+        recipient: Address,
+        amount: i128,
+        _min_amount_out: i128,
+        _deadline: u64,
+    ) -> i128 {
+        let router = env.current_contract_address();
+        let consumed = amount / 2;
+        token::Client::new(&env, &from_token).transfer_from(&router, &caller, &router, &consumed);
+        let amount_out = amount * 2;
+        token::Client::new(&env, &to_token).transfer(&router, &recipient, &amount_out);
+        amount_out
+    }
+}
+
+struct SwapFixture {
+    env: Env,
+    contract_id: Address,
+    escrow: Address,
+    router: Address,
+    from_token: Address,
+    to_token: Address,
+    recipient: Address,
+}
+
+fn setup_swap(partial_router: bool) -> SwapFixture {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SettlementContract);
+    let client = SettlementContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let escrow = Address::generate(&env);
+    let router = if partial_router {
+        env.register_contract(None, MockPartialSwapRouter)
+    } else {
+        env.register_contract(None, MockSwapRouter)
+    };
+    let from_token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    let to_token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    let recipient = Address::generate(&env);
+
+    client.init(&admin, &escrow);
+    client.set_swap_router(&admin, &router);
+    token::StellarAssetClient::new(&env, &from_token).mint(&contract_id, &100);
+    token::StellarAssetClient::new(&env, &to_token).mint(&router, &200);
+
+    SwapFixture {
+        env,
+        contract_id,
+        escrow,
+        router,
+        from_token,
+        to_token,
+        recipient,
+    }
+}
+
+/// Amounts passed to `approve` on `token` during the last invocation, in order.
+fn approve_amounts(env: &Env, token: &Address) -> std::vec::Vec<i128> {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::xdr::{ContractEventBody, ScVal};
+
+    env.events()
+        .all()
+        .filter_by_contract(token)
+        .events()
+        .iter()
+        .filter_map(|event| {
+            let ContractEventBody::V0(body) = &event.body;
+            match body.topics.first() {
+                Some(ScVal::Symbol(sym)) if sym.as_slice() == b"approve" => {}
+                _ => return None,
+            }
+            match &body.data {
+                ScVal::Vec(Some(items)) => match items.first() {
+                    Some(ScVal::I128(parts)) => {
+                        Some(((parts.hi as i128) << 64) | parts.lo as i128)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        })
+        .collect()
 }
 
 #[test]
@@ -428,4 +531,92 @@ fn test_execute_settlement_swap_rejects_deadline_beyond_window() {
         &99,
     );
     assert!(expired.is_err());
+}
+
+/// After a successful swap the router must hold no residual allowance over
+/// the settlement contract's input token.
+#[test]
+fn test_execute_settlement_swap_revokes_router_allowance_on_success() {
+    let f = setup_swap(false);
+    let client = SettlementContractClient::new(&f.env, &f.contract_id);
+
+    client.execute_settlement_swap(
+        &f.escrow,
+        &f.from_token,
+        &f.to_token,
+        &f.recipient,
+        &100,
+        &190,
+        &300,
+    );
+
+    // The router is approved for exactly `amount`, then explicitly revoked.
+    assert_eq!(approve_amounts(&f.env, &f.from_token), [100, 0]);
+    let input = token::Client::new(&f.env, &f.from_token);
+    assert_eq!(input.allowance(&f.contract_id, &f.router), 0);
+    assert_eq!(input.balance(&f.router), 100);
+}
+
+/// A router that consumes less than the approved amount is rejected with
+/// SwapInputNotConsumed, and the whole call (including the approval) reverts,
+/// so no allowance survives the failed swap.
+#[test]
+fn test_execute_settlement_swap_partial_consumption_leaves_no_allowance() {
+    let f = setup_swap(true);
+    let client = SettlementContractClient::new(&f.env, &f.contract_id);
+
+    let result = client.try_execute_settlement_swap(
+        &f.escrow,
+        &f.from_token,
+        &f.to_token,
+        &f.recipient,
+        &100,
+        &190,
+        &300,
+    );
+    match result {
+        Err(Ok(err)) => assert_eq!(err, SettlementError::SwapInputNotConsumed.into()),
+        _ => panic!("Expected SwapInputNotConsumed for a partially consuming router"),
+    }
+
+    let input = token::Client::new(&f.env, &f.from_token);
+    assert_eq!(input.allowance(&f.contract_id, &f.router), 0);
+    assert_eq!(input.balance(&f.contract_id), 100);
+}
+
+/// Boundary: swapping the contract's entire balance still leaves a zero
+/// allowance, and a follow-up swap with no remaining balance is rejected
+/// before any new approval is granted.
+#[test]
+fn test_execute_settlement_swap_full_balance_then_insufficient_balance() {
+    let f = setup_swap(false);
+    let client = SettlementContractClient::new(&f.env, &f.contract_id);
+
+    client.execute_settlement_swap(
+        &f.escrow,
+        &f.from_token,
+        &f.to_token,
+        &f.recipient,
+        &100,
+        &0,
+        &300,
+    );
+    let input = token::Client::new(&f.env, &f.from_token);
+    assert_eq!(input.balance(&f.contract_id), 0);
+    assert_eq!(input.allowance(&f.contract_id, &f.router), 0);
+
+    let result = client.try_execute_settlement_swap(
+        &f.escrow,
+        &f.from_token,
+        &f.to_token,
+        &f.recipient,
+        &1,
+        &0,
+        &300,
+    );
+    match result {
+        Err(Ok(err)) => assert_eq!(err, SettlementError::InsufficientSwapBalance.into()),
+        _ => panic!("Expected InsufficientSwapBalance once the balance is spent"),
+    }
+    assert_eq!(input.allowance(&f.contract_id, &f.router), 0);
 }
