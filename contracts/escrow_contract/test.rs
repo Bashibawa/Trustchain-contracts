@@ -97,12 +97,13 @@ impl MaliciousSettlementContract {
     pub fn get_driver_preference(env: Env, _driver: Address) -> Option<Address> {
         // Any address different from the escrow's real token forces
         // payout_driver into the execute_settlement_swap path.
-        Some(Address::generate(&env))
+        Some(env.current_contract_address())
     }
 
     pub fn execute_settlement_swap(
         env: Env,
         _caller: Address,
+        _delivery_id: u64,
         _from_token: Address,
         _to_token: Address,
         _recipient: Address,
@@ -157,14 +158,15 @@ impl MaliciousPreferenceContract {
         let _: () = env.invoke_contract(
             &target,
             &Symbol::new(&env, "release_escrow"),
-            soroban_sdk::vec![&env, Address::generate(&env).into_val(&env), 0u64.into_val(&env)],
+            soroban_sdk::vec![&env, _driver.into_val(&env), 0u64.into_val(&env)],
         );
-        Some(Address::generate(&env))
+        Some(env.current_contract_address())
     }
 
     pub fn execute_settlement_swap(
         env: Env,
         _caller: Address,
+        _delivery_id: u64,
         _from_token: Address,
         _to_token: Address,
         _recipient: Address,
@@ -7390,4 +7392,121 @@ fn test_admin_freeze_funds_is_idempotent() {
     client.admin_freeze_funds(&admin, &10405u64);
 
     assert_eq!(client.get_escrow(&10405u64).status, EscrowStatus::Paused);
+}
+
+// ── Settlement swap correlation: delivery_id is carried into the swap ───────
+
+/// Settlement stand-in that records the arguments escrow passes to
+/// `execute_settlement_swap`, so tests can assert on the call schema.
+#[contract]
+struct RecordingSettlementContract;
+
+#[contractimpl]
+impl RecordingSettlementContract {
+    pub fn get_driver_preference(env: Env, _driver: Address) -> Option<Address> {
+        env.storage().instance().get(&Symbol::new(&env, "pref"))
+    }
+
+    pub fn execute_settlement_swap(
+        env: Env,
+        caller: Address,
+        delivery_id: u64,
+        _from_token: Address,
+        to_token: Address,
+        recipient: Address,
+        amount: i128,
+        _min_amount_out: i128,
+        _deadline: u64,
+    ) {
+        caller.require_auth();
+        env.storage().instance().set(
+            &Symbol::new(&env, "last_swap"),
+            &(caller, delivery_id, to_token, recipient, amount),
+        );
+    }
+}
+
+fn install_settlement(env: &Env, client: &EscrowContractClient, admin: &Address, settlement: &Address) {
+    client.set_settlement_contract(admin, settlement);
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + constants::SETTLEMENT_CONTRACT_TIMELOCK_SECONDS);
+    client.confirm_settlement_contract(admin);
+}
+
+#[test]
+fn test_release_escrow_passes_delivery_id_to_settlement_swap() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+    let preferred = Address::generate(&env);
+
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 1000);
+    client.create_escrow(&sender, &recipient, &driver, &7101u64, &token, &1000, &None);
+
+    let settlement = env.register(RecordingSettlementContract, ());
+    env.as_contract(&settlement, || {
+        env.storage().instance().set(&Symbol::new(&env, "pref"), &preferred);
+    });
+    install_settlement(&env, &client, &admin, &settlement);
+
+    client.release_escrow(&recipient, &7101u64);
+
+    let (caller, delivery_id, to_token, swap_recipient, amount): (Address, u64, Address, Address, i128) =
+        env.as_contract(&settlement, || {
+            env.storage()
+                .instance()
+                .get(&Symbol::new(&env, "last_swap"))
+                .expect("execute_settlement_swap was not invoked")
+        });
+    assert_eq!(caller, contract_id);
+    assert_eq!(delivery_id, 7101u64);
+    assert_eq!(to_token, preferred);
+    assert_eq!(swap_recipient, driver);
+    assert_eq!(amount, 1000);
+}
+
+#[test]
+fn test_split_resolution_passes_delivery_id_to_settlement_swap() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+    let preferred = Address::generate(&env);
+    let dispute_contract = Address::generate(&env);
+
+    client.init(&admin, &token, &0);
+    client.set_dispute_resolution_contract(&admin, &dispute_contract);
+    mint(&env, &token, &sender, 1000);
+    client.create_escrow(&sender, &recipient, &driver, &7102u64, &token, &1000, &None);
+
+    let settlement = env.register(RecordingSettlementContract, ());
+    env.as_contract(&settlement, || {
+        env.storage().instance().set(&Symbol::new(&env, "pref"), &preferred);
+    });
+    install_settlement(&env, &client, &admin, &settlement);
+
+    client.freeze_funds(&dispute_contract, &7102u64);
+    client.resolve_dispute_split(&admin, &7102u64, &5000); // 50% sender
+
+    let (_, delivery_id, _, _, amount): (Address, u64, Address, Address, i128) =
+        env.as_contract(&settlement, || {
+            env.storage()
+                .instance()
+                .get(&Symbol::new(&env, "last_swap"))
+                .expect("execute_settlement_swap was not invoked")
+        });
+    assert_eq!(delivery_id, 7102u64);
+    assert_eq!(amount, 500);
 }

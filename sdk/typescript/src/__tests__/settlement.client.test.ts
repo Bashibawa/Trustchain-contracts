@@ -118,33 +118,40 @@ describe('SettlementClient getDriverPreference', () => {
 });
 
 describe('SettlementClient executeSettlementSwap', () => {
-  it('targets execute_settlement_swap with the encoded swap args', async () => {
-    const call = mockInvoker({ execute_settlement_swap: [nativeToScVal(1_000n, { type: 'i128' })] });
+  const swapParams = {
+    caller: CONTRACT_ID,
+    deliveryId: 7101n,
+    fromToken: TOKEN,
+    toToken: TOKEN,
+    recipient: DRIVER,
+    amount: 1_000n,
+    minAmountOut: 950n,
+    deadline: 300n,
+  };
 
-    const result = await client().executeSettlementSwap({
-      admin: ADMIN,
-      driver: DRIVER,
-      token: TOKEN,
-      amount: 1_000n,
-    });
+  it('targets execute_settlement_swap with the encoded swap args including delivery_id', async () => {
+    const call = mockInvoker({ execute_settlement_swap: [nativeToScVal(null)] });
 
-    expect(result).toBe(1_000n);
+    await client().executeSettlementSwap(swapParams);
+
     const [fn, args] = call.mock.calls[0];
     expect(fn).toBe('execute_settlement_swap');
-    expect(args).toHaveLength(4);
-    expect(decodeAddress(args[0] as xdr.ScVal)).toBe(ADMIN);
-    expect(decodeAddress(args[1] as xdr.ScVal)).toBe(DRIVER);
+    expect(args).toHaveLength(8);
+    expect(decodeAddress(args[0] as xdr.ScVal)).toBe(CONTRACT_ID);
+    expect(decodeU64(args[1] as xdr.ScVal)).toBe(7101n);
     expect(decodeAddress(args[2] as xdr.ScVal)).toBe(TOKEN);
-    expect(decodeU64(args[3] as xdr.ScVal)).toBe(1_000n);
+    expect(decodeAddress(args[3] as xdr.ScVal)).toBe(TOKEN);
+    expect(decodeAddress(args[4] as xdr.ScVal)).toBe(DRIVER);
+    expect(scValToNative(args[5] as xdr.ScVal)).toBe(1_000n);
+    expect(scValToNative(args[6] as xdr.ScVal)).toBe(950n);
+    expect(decodeU64(args[7] as xdr.ScVal)).toBe(300n);
   });
 
   it('propagates a reverted swap to the caller', async () => {
     jest
       .spyOn(ContractInvoker.prototype, 'call')
-      .mockRejectedValue(new Error('Soroban simulation failed: TrustchainError::InsufficientBalance'));
+      .mockRejectedValue(new Error('Soroban simulation failed: TrustchainError::Unauthorized'));
 
-    await expect(
-      client().executeSettlementSwap({ admin: ADMIN, driver: DRIVER, token: TOKEN, amount: 1n }),
-    ).rejects.toThrow('InsufficientBalance');
+    await expect(client().executeSettlementSwap(swapParams)).rejects.toThrow('Unauthorized');
   });
 });

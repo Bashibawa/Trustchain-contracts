@@ -3077,7 +3077,12 @@ Intended to integrate with the Stellar DEX or a liquidity pool to convert
 `min_amount_out`.
 
 **Parameters:**
-- `caller: Address` - Authorized caller (must sign)
+- `caller: Address` - Authorized caller (must sign); must be the configured
+  escrow contract
+- `delivery_id: u64` - Escrow delivery ID this swap pays out. Because only the
+  authenticated escrow contract may call this function, the identifier is
+  attributable to the escrow that holds the record and can be used to
+  correlate the swap with that escrow record off-chain.
 - `from_token: Address` - Source token contract address
 - `to_token: Address` - Target token contract address
 - `recipient: Address` - Address receiving the swapped funds

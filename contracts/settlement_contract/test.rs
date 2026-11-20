@@ -274,7 +274,7 @@ fn test_execute_settlement_swap_requires_initialization() {
     let recipient = Address::generate(&env);
 
     let result =
-        client.try_execute_settlement_swap(&caller, &token, &token, &recipient, &100i128, &90i128, &300u64);
+        client.try_execute_settlement_swap(&caller, &1u64, &token, &token, &recipient, &100i128, &90i128, &300u64);
     match result {
         Err(Ok(err)) => assert_eq!(err, TrustchainError::NotInitialized.into()),
         _ => panic!("Expected NotInitialized from un-initialized execute_settlement_swap"),
@@ -304,7 +304,7 @@ fn test_execute_settlement_swap_rejects_non_escrow_caller() {
     let recipient = Address::generate(&env);
 
     let result = client
-        .try_execute_settlement_swap(&intruder, &token, &token, &recipient, &100i128, &90i128, &300u64);
+        .try_execute_settlement_swap(&intruder, &1u64, &token, &token, &recipient, &100i128, &90i128, &300u64);
     match result {
         Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected Unauthorized for a non-escrow caller"),
@@ -328,7 +328,7 @@ fn test_execute_settlement_swap_rejects_same_token_pair() {
     let recipient = Address::generate(&env);
 
     let result = client
-        .try_execute_settlement_swap(&escrow, &token, &token, &recipient, &100i128, &90i128, &300u64);
+        .try_execute_settlement_swap(&escrow, &1u64, &token, &token, &recipient, &100i128, &90i128, &300u64);
     match result {
         Err(Ok(err)) => assert_eq!(err, SettlementError::InvalidSwapParameters.into()),
         _ => panic!("Expected InvalidSwapParameters for an identical token pair"),
@@ -379,6 +379,7 @@ fn test_execute_settlement_swap_uses_configured_router() {
 
     client.execute_settlement_swap(
         &escrow,
+        &42u64,
         &from_token,
         &to_token,
         &recipient,
@@ -408,6 +409,7 @@ fn test_execute_settlement_swap_rejects_deadline_beyond_window() {
 
     let too_far = client.try_execute_settlement_swap(
         &escrow,
+        &1u64,
         &from_token,
         &to_token,
         &recipient,
@@ -419,6 +421,7 @@ fn test_execute_settlement_swap_rejects_deadline_beyond_window() {
 
     let expired = client.try_execute_settlement_swap(
         &escrow,
+        &1u64,
         &from_token,
         &to_token,
         &recipient,
@@ -427,4 +430,57 @@ fn test_execute_settlement_swap_rejects_deadline_beyond_window() {
         &99,
     );
     assert!(expired.is_err());
+}
+
+// ── delivery_id correlation ────────────────────────────────────────────────
+
+/// A caller other than the configured escrow cannot attribute a swap to an
+/// escrow delivery_id: the identifier is only accepted from the escrow.
+#[test]
+fn test_execute_settlement_swap_rejects_delivery_id_from_non_escrow_caller() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SettlementContract);
+    let client = SettlementContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let escrow = Address::generate(&env);
+    client.init(&admin, &escrow);
+
+    let intruder = Address::generate(&env);
+    let from_token = Address::generate(&env);
+    let to_token = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let result = client.try_execute_settlement_swap(
+        &intruder, &7u64, &from_token, &to_token, &recipient, &100i128, &90i128, &300u64,
+    );
+    match result {
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        _ => panic!("Expected Unauthorized for a non-escrow caller"),
+    }
+}
+
+/// The escrow caller must authenticate; a forged `caller` argument without
+/// the escrow's authorization is rejected.
+#[test]
+fn test_execute_settlement_swap_requires_escrow_auth() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SettlementContract);
+    let client = SettlementContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let escrow = Address::generate(&env);
+    env.mock_all_auths();
+    client.init(&admin, &escrow);
+    env.set_auths(&[]);
+
+    let from_token = Address::generate(&env);
+    let to_token = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    let result = client.try_execute_settlement_swap(
+        &escrow, &7u64, &from_token, &to_token, &recipient, &100i128, &90i128, &300u64,
+    );
+    assert!(result.is_err());
 }

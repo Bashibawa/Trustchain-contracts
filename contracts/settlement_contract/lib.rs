@@ -233,9 +233,15 @@ impl SettlementContract {
     }
 
     /// Swap escrow-funded tokens through the configured router.
+    ///
+    /// `delivery_id` identifies the escrow record this swap pays out. It is
+    /// supplied by `caller`, which must authenticate and must be the
+    /// configured escrow contract, so the identifier is attributable to the
+    /// escrow that holds the record rather than to an arbitrary third party.
     pub fn execute_settlement_swap(
         env: Env,
         caller: Address,
+        delivery_id: u64,
         from_token: Address,
         to_token: Address,
         recipient: Address,

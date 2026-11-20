@@ -350,6 +350,7 @@ fn require_delivery_lifecycle_caller(env: &Env, caller: &Address, record: &Escro
 #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
 fn payout_driver(
     env: &Env,
+    delivery_id: u64,
     token: &Address,
     driver: &Address,
     amount: i128,
@@ -412,6 +413,7 @@ fn payout_driver(
                     soroban_sdk::vec![
                         env,
                         env.current_contract_address().into_val(env),
+                        delivery_id.into_val(env),
                         token.into_val(env),
                         preferred_asset.into_val(env),
                         payout_address.into_val(env),
@@ -447,6 +449,7 @@ fn settle_escrow_funds(
 ) {
     payout_driver(
         env,
+        delivery_id,
         &record.token,
         &record.driver,
         driver_amount,
@@ -1993,6 +1996,7 @@ impl EscrowContract {
             let fleet_management = get_fleet_management_contract(&env);
             payout_driver(
                 &env,
+                delivery_id,
                 &record.token,
                 &record.driver,
                 net_driver_amount,
