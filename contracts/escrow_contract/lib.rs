@@ -2023,8 +2023,14 @@ impl EscrowContract {
             panic_with_error!(&env, TrustchainError::InsufficientFunds);
         }
 
-        let sender_amount = record.amount.saturating_mul(sender_share_bps as i128) / 10000;
-        let driver_share_amount = record.amount.saturating_sub(sender_amount);
+        // Overflow-safe basis-point share: `record.amount * sender_share_bps`
+        // overflows i128 for high-value escrows, and the previous
+        // saturating_mul silently distorted the split. sender_share_bps is
+        // already bounded to 0..=10000 above, so 0 <= sender_amount <=
+        // record.amount and the driver share below cannot underflow.
+        let sender_amount = checked_bps_share(record.amount, sender_share_bps)
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::ArithmeticOverflow));
+        let driver_share_amount = record.amount - sender_amount;
 
         let base_fee_bps: u32 = env
             .storage()

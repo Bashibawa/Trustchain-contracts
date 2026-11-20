@@ -25,9 +25,10 @@ fn arm_reentrant_mock(env: &Env, target: &Address, attacker: &Address, method: &
 
 proptest! {
     #[test]
-    fn split_conserves_funds(amount in 0i128..i128::MAX, bps in 0u32..=10_000) {
-        let sender = amount.saturating_mul(bps as i128) / 10_000;
-        prop_assert_eq!(sender + amount.saturating_sub(sender), amount);
+    fn split_conserves_funds(amount in 0i128..=i128::MAX, bps in 0u32..=10_000) {
+        let sender = checked_bps_share(amount, bps).expect("in-range split is supported");
+        prop_assert!((0..=amount).contains(&sender));
+        prop_assert_eq!(sender + (amount - sender), amount);
     }
 
     #[test]
@@ -7657,5 +7658,94 @@ fn test_sender_volume_at_cap_emits_event_and_settlement_still_succeeds() {
         sender_volume_ttl(&env, &contract_id, &sender),
         EXPECTED_VOLUME_TTL
     );
+}
+
+// ── Dispute split overflow (resolve_dispute_split) ───────────────────────────
+
+/// Locks `amount`, pauses it via a dispute and resolves it with
+/// `sender_share_bps`. Returns `(sender_balance, driver_balance, fee_balance)`.
+fn run_boundary_split(amount: i128, sender_share_bps: u32, fee_bps: u32) -> (i128, i128, i128) {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &fee_bps);
+    mint(&env, &token, &sender, amount);
+    client.create_escrow(&sender, &recipient, &driver, &14_401u64, &token, &amount, &None);
+    // High-value escrows must be resolved through the dispute contract.
+    let dispute = new_dispute_contract(&env, &client, &admin);
+    client.raise_dispute(&dispute, &14_401u64);
+    client.resolve_dispute_split(&dispute, &14_401u64, &sender_share_bps);
+
+    assert_eq!(client.get_escrow(&14_401u64).status, EscrowStatus::Split);
+    assert_eq!(balance(&env, &token, &contract_id), 0);
+    assert_eq!(client.get_total_locked(&token), 0);
+    (
+        balance(&env, &token, &sender),
+        balance(&env, &token, &driver),
+        balance(&env, &token, &admin),
+    )
+}
+
+#[test]
+fn test_resolve_dispute_split_exact_at_i128_boundary() {
+    let amount = i128::MAX;
+    let bps = 6_000u32;
+    // amount * 6000 overflows; saturating_mul would have produced
+    // i128::MAX / 10_000 (~0.01%) instead of 60% for the sender.
+    let expected_sender = (amount / 10_000) * 6_000 + (amount % 10_000) * 6_000 / 10_000;
+    assert_ne!(expected_sender, amount.saturating_mul(bps as i128) / 10_000);
+
+    let (sender, driver, fee) = run_boundary_split(amount, bps, 0);
+    assert_eq!(sender, expected_sender);
+    assert_eq!(driver, amount - expected_sender);
+    assert_eq!(fee, 0);
+}
+
+#[test]
+fn test_resolve_dispute_split_boundary_shares_conserve_funds() {
+    let amount = i128::MAX;
+    // Full refund to sender and full payout to driver at the boundary.
+    assert_eq!(run_boundary_split(amount, 10_000, 0), (amount, 0, 0));
+    assert_eq!(run_boundary_split(amount, 0, 0), (0, amount, 0));
+
+    // With a platform fee the three legs still sum to the escrowed amount.
+    let (sender, driver, fee) = run_boundary_split(amount, 2_500, 1_000);
+    assert_eq!(sender, checked_bps_share(amount, 2_500).unwrap());
+    assert_eq!(fee, checked_bps_share(amount - sender, 1_000).unwrap());
+    assert_eq!(sender + driver + fee, amount);
+}
+
+#[test]
+fn test_resolve_dispute_split_rejects_out_of_range_share() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, i128::MAX);
+    client.create_escrow(&sender, &recipient, &driver, &14_402u64, &token, &i128::MAX, &None);
+    let dispute = new_dispute_contract(&env, &client, &admin);
+    client.raise_dispute(&dispute, &14_402u64);
+
+    let result = client.try_resolve_dispute_split(&dispute, &14_402u64, &10_001u32);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, EscrowError::InvalidFee.into()),
+        other => panic!("expected InvalidFee, got {other:?}"),
+    }
+    assert_eq!(client.get_escrow(&14_402u64).status, EscrowStatus::Paused);
+    assert_eq!(balance(&env, &token, &contract_id), i128::MAX);
 }
 

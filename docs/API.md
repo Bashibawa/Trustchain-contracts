@@ -675,6 +675,13 @@ and receive approval from two distinct mediators.
 - `Unauthorized` - Caller not admin
 - `InvalidState` - Escrow not in Paused state
 - `InvalidFee` - sender_share_bps > 10000
+- `ArithmeticOverflow` - Defensive: the basis-point share could not be computed
+  exactly (not reachable for a valid, non-negative escrow amount)
+
+The sender share is `floor(amount * sender_share_bps / 10000)`, computed without
+forming the full product, so it is exact for every escrow amount up to
+`i128::MAX`. The driver receives `amount - sender_share` minus the platform fee;
+the three legs always sum to the escrowed amount.
 
 **Events:** `dispute_resolved`
 
