@@ -7389,3 +7389,78 @@ fn test_admin_freeze_funds_is_idempotent() {
 
     assert_eq!(client.get_escrow(&10405u64).status, EscrowStatus::Paused);
 }
+
+// ---------------------------------------------------------------------------
+// Fee rounding policy: platform fee is rounded DOWN (see `calculate_fee`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_fee_rounding_thresholds_round_down() {
+    for bps in [1u32, 3, 7, 50, 250, 500, 999, 1000] {
+        let min = min_amount_for_nonzero_fee(bps).unwrap();
+        // Boundary: one unit below the threshold settles fee-free...
+        assert_eq!(calculate_fee(min - 1, bps), 0, "bps={bps}");
+        // ...and the threshold itself pays exactly one unit.
+        assert_eq!(calculate_fee(min, bps), 1, "bps={bps}");
+        // The fee never exceeds the configured rate.
+        for amount in [1i128, min - 1, min, min + 1, 10_000, 123_456_789] {
+            let fee = calculate_fee(amount, bps);
+            assert!(fee * 10_000 <= amount * bps as i128, "bps={bps} amount={amount}");
+            assert!((amount * bps as i128 - fee * 10_000) < 10_000);
+        }
+    }
+    assert_eq!(min_amount_for_nonzero_fee(0), None);
+    assert_eq!(calculate_fee(1, 1000), 0);
+    assert_eq!(calculate_fee(0, 1000), 0);
+    assert_eq!(calculate_fee(-5, 1000), 0);
+}
+
+#[test]
+fn test_fee_exact_for_amounts_that_previously_saturated() {
+    // amount * bps overflows i128; the old saturating formula undercharged.
+    let amount = i128::MAX;
+    let expected = (amount / 10_000) * 1000 + (amount % 10_000) * 1000 / 10_000;
+    assert_eq!(calculate_fee(amount, 1000), expected);
+    assert!(calculate_fee(amount, 1000) > i128::MAX / 11);
+}
+
+#[test]
+fn test_release_low_amount_fee_boundary_end_to_end() {
+    // 5% fee: threshold is ceil(10_000 / 500) = 20.
+    for (id, amount, fee) in [(9001u64, 19i128, 0i128), (9002, 20, 1), (9003, 1, 0)] {
+        let (env, contract_id) = setup_env();
+        let client = EscrowContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let driver = Address::generate(&env);
+        let token_admin = Address::generate(&env);
+        let token = setup_token(&env, &token_admin);
+        client.init(&admin, &token, &500);
+        mint(&env, &token, &sender, amount);
+        client.create_escrow(&sender, &recipient, &driver, &id, &token, &amount, &None);
+        client.release_escrow(&admin, &id);
+        assert_eq!(balance(&env, &token, &admin), fee);
+        assert_eq!(balance(&env, &token, &driver), amount - fee);
+    }
+}
+
+#[test]
+fn test_zero_amount_escrow_rejected() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+    client.init(&admin, &token, &500);
+    let res = client.try_create_escrow(
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &9010u64,
+        &token,
+        &0,
+        &None,
+    );
+    assert_eq!(res, Err(Ok(EscrowError::InvalidAmount.into())));
+}

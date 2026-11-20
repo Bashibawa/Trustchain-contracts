@@ -25,6 +25,8 @@ pub mod constants {
     pub const MAX_BATCH_SIZE: u32 = 100;
     pub const DEFAULT_ESCROW_EXPIRY_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
     pub const MAX_PLATFORM_FEE_BPS: u32 = 1000;
+    /// Basis-point denominator: 10_000 bps == 100%.
+    pub const BPS_DENOMINATOR: i128 = 10_000;
     pub const MAX_SLIPPAGE_TOLERANCE_BPS: u32 = 1000;
     pub const SETTLEMENT_CONTRACT_TIMELOCK_SECONDS: u64 = 3 * 24 * 60 * 60; // 3 days
     /// Default time a recipient has, after confirming delivery (i.e. after
@@ -170,8 +172,49 @@ fn apply_freeze_funds(env: &Env, actor: &Address, delivery_id: u64) {
     }
 }
 
+/// Compute the platform fee owed on `amount` at `platform_fee_bps`.
+///
+/// # Rounding policy
+///
+/// The fee is `floor(amount * platform_fee_bps / BPS_DENOMINATOR)`: it is
+/// **rounded down**, so any fractional unit goes to the payee (driver or
+/// fleet treasury), never to the platform. Consequences callers can rely on:
+///
+/// - `0 <= fee <= amount` and `fee + (amount - fee) == amount` (conservation).
+/// - The effective rate never exceeds the configured rate.
+/// - For a non-zero rate `b`, the fee is zero for every
+///   `amount < ceil(BPS_DENOMINATOR / b)` (see [`min_amount_for_nonzero_fee`]).
+///   This is intentional: tiny escrows settle fee-free rather than being
+///   charged above the published rate.
+///
+/// The product is split into whole and remainder parts so the result is exact
+/// for every non-negative `i128` amount; the previous
+/// `amount.saturating_mul(bps) / 10_000` silently undercharged once the
+/// multiplication saturated.
 fn calculate_fee(amount: i128, platform_fee_bps: u32) -> i128 {
-    amount.saturating_mul(platform_fee_bps as i128) / 10_000
+    if amount <= 0 || platform_fee_bps == 0 {
+        return 0;
+    }
+    let bps = platform_fee_bps as i128;
+    let whole = amount / constants::BPS_DENOMINATOR;
+    let rem = amount % constants::BPS_DENOMINATOR;
+    // With bps <= 10_000 (all callers), `whole * bps <= amount`, so this
+    // cannot overflow; `saturating_*` keeps it total for out-of-range input.
+    whole
+        .saturating_mul(bps)
+        .saturating_add(rem * bps / constants::BPS_DENOMINATOR)
+}
+
+/// Smallest escrow amount that yields a non-zero fee at `platform_fee_bps`
+/// under the round-down policy of [`calculate_fee`]: `ceil(10_000 / bps)`.
+/// Returns `None` when the rate is zero (no amount ever pays a fee).
+#[allow(dead_code)] // documented helper; exercised by the fee-threshold tests
+fn min_amount_for_nonzero_fee(platform_fee_bps: u32) -> Option<i128> {
+    if platform_fee_bps == 0 {
+        return None;
+    }
+    let bps = platform_fee_bps as i128;
+    Some((constants::BPS_DENOMINATOR + bps - 1) / bps)
 }
 
 /// Validates a volume tier list before it is written to storage.
