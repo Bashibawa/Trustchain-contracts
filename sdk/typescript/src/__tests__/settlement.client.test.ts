@@ -39,10 +39,6 @@ function decodeAddress(value: xdr.ScVal): string {
   return scValToNative(value) as string;
 }
 
-function decodeU64(value: xdr.ScVal): bigint {
-  return scValToNative(value) as bigint;
-}
-
 afterEach(() => {
   jest.restoreAllMocks();
 });
@@ -75,21 +71,16 @@ describe('SettlementClient getAdmin', () => {
 });
 
 describe('SettlementClient setDriverPreference', () => {
-  it('targets set_driver_preference with admin, driver and preference args', async () => {
+  it('targets set_driver_preference with driver and token args', async () => {
     const call = mockInvoker({ set_driver_preference: [nativeToScVal(null)] });
 
-    await client().setDriverPreference({
-      admin: ADMIN,
-      driver: DRIVER,
-      preference: 1,
-    });
+    await client().setDriverPreference({ driver: DRIVER, toToken: TOKEN });
 
     const [fn, args] = call.mock.calls[0];
     expect(fn).toBe('set_driver_preference');
-    expect(args).toHaveLength(3);
-    expect(decodeAddress(args[0] as xdr.ScVal)).toBe(ADMIN);
-    expect(decodeAddress(args[1] as xdr.ScVal)).toBe(DRIVER);
-    expect(scValToNative(args[2] as xdr.ScVal)).toBe(1);
+    expect(args).toHaveLength(2);
+    expect(decodeAddress(args[0] as xdr.ScVal)).toBe(DRIVER);
+    expect(decodeAddress(args[1] as xdr.ScVal)).toBe(TOKEN);
   });
 
   it('propagates a reverted preference update to the caller', async () => {
@@ -98,53 +89,29 @@ describe('SettlementClient setDriverPreference', () => {
       .mockRejectedValue(new Error('Soroban simulation failed: TrustchainError::Unauthorized'));
 
     await expect(
-      client().setDriverPreference({ admin: ADMIN, driver: DRIVER, preference: 0 }),
+      client().setDriverPreference({ driver: DRIVER, toToken: TOKEN }),
     ).rejects.toThrow('Unauthorized');
   });
 });
 
 describe('SettlementClient getDriverPreference', () => {
   it('reads get_driver_preference with the driver address', async () => {
-    const call = mockInvoker({ get_driver_preference: [nativeToScVal(2)] });
+    const call = mockInvoker({
+      get_driver_preference: [nativeToScVal(TOKEN, { type: 'address' })],
+    });
 
     const preference = await client().getDriverPreference(DRIVER);
 
-    expect(preference).toBe(2);
+    expect(preference).toBe(TOKEN);
     const [fn, args] = call.mock.calls[0];
     expect(fn).toBe('get_driver_preference');
     expect(args).toHaveLength(1);
     expect(decodeAddress(args[0] as xdr.ScVal)).toBe(DRIVER);
   });
-});
 
-describe('SettlementClient executeSettlementSwap', () => {
-  it('targets execute_settlement_swap with the encoded swap args', async () => {
-    const call = mockInvoker({ execute_settlement_swap: [nativeToScVal(1_000n, { type: 'i128' })] });
+  it('returns null when no preference is set', async () => {
+    mockInvoker({ get_driver_preference: [nativeToScVal(null)] });
 
-    const result = await client().executeSettlementSwap({
-      admin: ADMIN,
-      driver: DRIVER,
-      token: TOKEN,
-      amount: 1_000n,
-    });
-
-    expect(result).toBe(1_000n);
-    const [fn, args] = call.mock.calls[0];
-    expect(fn).toBe('execute_settlement_swap');
-    expect(args).toHaveLength(4);
-    expect(decodeAddress(args[0] as xdr.ScVal)).toBe(ADMIN);
-    expect(decodeAddress(args[1] as xdr.ScVal)).toBe(DRIVER);
-    expect(decodeAddress(args[2] as xdr.ScVal)).toBe(TOKEN);
-    expect(decodeU64(args[3] as xdr.ScVal)).toBe(1_000n);
-  });
-
-  it('propagates a reverted swap to the caller', async () => {
-    jest
-      .spyOn(ContractInvoker.prototype, 'call')
-      .mockRejectedValue(new Error('Soroban simulation failed: TrustchainError::InsufficientBalance'));
-
-    await expect(
-      client().executeSettlementSwap({ admin: ADMIN, driver: DRIVER, token: TOKEN, amount: 1n }),
-    ).rejects.toThrow('InsufficientBalance');
+    await expect(client().getDriverPreference(DRIVER)).resolves.toBeNull();
   });
 });

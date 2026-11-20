@@ -1,8 +1,8 @@
 #![no_std]
 
 use shared_types::{
-    DriverPreferenceUpdatedEvent, EscrowContractUpdatedEvent, TrustchainError,
-    PendingPeerContractChange, StorageKey,
+    is_admin, DriverPreferenceUpdatedEvent, EscrowContractUpdatedEvent,
+    PendingPeerContractChange, StorageKey, TrustchainError,
 };
 
 // Settlement contract for cross-border currency swaps through an admin-configured router.
@@ -16,6 +16,8 @@ use soroban_sdk::{
 pub enum DataKey {
     EscrowContract,
     PendingEscrowContract,
+    /// Admin-configured swap router used by `execute_settlement_swap`.
+    SwapRouter,
     /// Per-driver preferred payout asset recorded via
     /// `set_driver_preference` (Issue #459).
     DriverPreference(Address),

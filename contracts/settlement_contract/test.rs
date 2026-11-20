@@ -258,9 +258,9 @@ fn test_get_admin_before_init_returns_not_initialized() {
     }
 }
 
-// ── execute_settlement_swap production guard ───────────────────────────────
+// ── execute_settlement_swap guards ─────────────────────────────────────────
 
-/// Calling the stub before init fails with NotInitialized rather than
+/// Calling execute_settlement_swap before init fails with NotInitialized rather than
 /// proceeding with no escrow contract configured.
 #[test]
 fn test_execute_settlement_swap_requires_initialization() {
@@ -274,7 +274,7 @@ fn test_execute_settlement_swap_requires_initialization() {
     let recipient = Address::generate(&env);
 
     let result =
-        client.try_execute_settlement_swap(&caller, &token, &token, &recipient, &100i128, &90i128);
+        client.try_execute_settlement_swap(&caller, &token, &token, &recipient, &100i128, &90i128, &300u64);
     match result {
         Err(Ok(err)) => assert_eq!(err, TrustchainError::NotInitialized.into()),
         _ => panic!("Expected NotInitialized from un-initialized execute_settlement_swap"),
@@ -282,7 +282,7 @@ fn test_execute_settlement_swap_requires_initialization() {
 }
 
 /// Only the configured escrow contract may call execute_settlement_swap; any
-/// other caller is rejected with Unauthorized before the stub guard fires.
+/// other caller is rejected with Unauthorized before any swap logic runs.
 ///
 /// Note: `TrustchainError::Unauthorized` and `SettlementError::SwapNotImplemented`
 /// share wire discriminant #1 because this contract mixes the shared error
@@ -304,18 +304,17 @@ fn test_execute_settlement_swap_rejects_non_escrow_caller() {
     let recipient = Address::generate(&env);
 
     let result = client
-        .try_execute_settlement_swap(&intruder, &token, &token, &recipient, &100i128, &90i128);
+        .try_execute_settlement_swap(&intruder, &token, &token, &recipient, &100i128, &90i128, &300u64);
     match result {
         Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected Unauthorized for a non-escrow caller"),
     }
 }
 
-/// The Phase 3 guard: even the authorized escrow caller hits the
-/// SwapNotImplemented panic — this stub must never silently no-op on mainnet
-/// with unimplemented settlement logic.
+/// The authorized escrow caller swapping a token for itself is rejected with
+/// InvalidSwapParameters before any router or token call is made.
 #[test]
-fn test_execute_settlement_swap_panics_before_phase_3() {
+fn test_execute_settlement_swap_rejects_identical_tokens() {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register_contract(None, SettlementContract);
@@ -328,11 +327,12 @@ fn test_execute_settlement_swap_panics_before_phase_3() {
     let token = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    let result =
-        client.try_execute_settlement_swap(&escrow, &token, &token, &recipient, &100i128, &90i128);
+    let result = client.try_execute_settlement_swap(
+        &escrow, &token, &token, &recipient, &100i128, &90i128, &300u64,
+    );
     match result {
-        Err(Ok(err)) => assert_eq!(err, SettlementError::SwapNotImplemented.into()),
-        _ => panic!("Expected SwapNotImplemented production guard"),
+        Err(Ok(err)) => assert_eq!(err, SettlementError::InvalidSwapParameters.into()),
+        _ => panic!("Expected InvalidSwapParameters for identical token pair"),
     }
 }
 
