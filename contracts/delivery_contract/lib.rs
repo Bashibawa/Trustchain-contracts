@@ -706,6 +706,13 @@ impl DeliveryContract {
     /// with `DeliveryError::TransitAlreadyStarted`; its only exits are
     /// `confirm_delivery`, a dispute via `dispute_resolution_contract`, or
     /// `reclaim_delivery_expired_escrow` once the escrow has expired.
+    ///
+    /// **Escrow handling:** the escrow under `delivery_id` is refunded only
+    /// when it belongs to this delivery (same delivery ID and sender) and is
+    /// `Locked`. A foreign or already-refunded escrow is left alone and the
+    /// cancellation reports `refund_amount = 0`; an owned escrow that is
+    /// paused, in holdback or settled rejects the cancellation with
+    /// `DeliveryError::EscrowNotLocked`.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn cancel_delivery(env: Env, sender: Address, delivery_id: DeliveryId) {
         sender.require_auth();
@@ -743,6 +750,22 @@ impl DeliveryContract {
         // attempting the refund cross-contract call (Issue #538). If no
         // escrow was attached, skip the refund and transition directly to
         // Cancelled with refund_amount = 0.
+        //
+        // When an escrow exists, its ownership and state are validated
+        // before anything is refunded or reported, so `refund_amount` in the
+        // `delivery_cancelled` event is non-zero only when this call actually
+        // returned funds to the sender:
+        //   - not owned by this delivery (different delivery_id or sender):
+        //     left untouched, cancellation proceeds, refund_amount = 0. A
+        //     foreign escrow must neither block the cancellation nor be
+        //     reported as this sender's refund.
+        //   - owned and Locked: refunded, refund_amount = escrow.amount.
+        //   - owned and already Refunded (e.g. reclaimed directly on the
+        //     escrow contract): nothing left to refund, refund_amount = 0.
+        //   - owned and Paused / Holdback / Released / Split: the funds are
+        //     under dispute or settled, so cancellation is rejected with
+        //     `DeliveryError::EscrowNotLocked`.
+        // The skipped cases also emit `cancel_escrow_skipped` with a reason.
         let mut refund_amount: i128 = 0;
         let has_escrow: bool = env.invoke_contract(
             &escrow_address,
@@ -755,17 +778,39 @@ impl DeliveryContract {
                 &soroban_sdk::Symbol::new(&env, "get_escrow"),
                 soroban_sdk::vec![&env, u64::from(delivery_id).into_val(&env)],
             );
-            refund_amount = escrow.amount;
 
-            let _: () = env.invoke_contract(
-                &escrow_address,
-                &soroban_sdk::Symbol::new(&env, "refund_escrow"),
-                soroban_sdk::vec![
-                    &env,
-                    sender.into_val(&env),
-                    u64::from(delivery_id).into_val(&env),
-                ],
-            );
+            let owned = escrow.delivery_id == u64::from(delivery_id)
+                && escrow.sender == delivery.sender;
+            let skip_reason = if !owned {
+                Some("foreign_escrow")
+            } else {
+                match escrow.status {
+                    shared_types::EscrowStatus::Locked => None,
+                    shared_types::EscrowStatus::Refunded => Some("already_refunded"),
+                    _ => panic_with_error!(&env, DeliveryError::EscrowNotLocked),
+                }
+            };
+
+            match skip_reason {
+                None => {
+                    let _: () = env.invoke_contract(
+                        &escrow_address,
+                        &soroban_sdk::Symbol::new(&env, "refund_escrow"),
+                        soroban_sdk::vec![
+                            &env,
+                            sender.into_val(&env),
+                            u64::from(delivery_id).into_val(&env),
+                        ],
+                    );
+                    refund_amount = escrow.amount;
+                }
+                Some(reason) => {
+                    env.events().publish(
+                        (Symbol::new(&env, "cancel_escrow_skipped"),),
+                        (delivery_id, Symbol::new(&env, reason)),
+                    );
+                }
+            }
         }
 
         delivery.status = DeliveryStatus::Cancelled;

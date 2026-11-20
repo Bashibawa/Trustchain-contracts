@@ -26,6 +26,10 @@ proptest! {
 
 // ── Mock Escrow Contract with call tracking and failure simulation ───────────────────────────────────────
 
+/// Amount every `MockEscrowContract` escrow reports, so tests can check the
+/// `refund_amount` that `cancel_delivery` publishes.
+const MOCK_ESCROW_AMOUNT: i128 = 500;
+
 #[contract]
 pub struct MockEscrowContract;
 
@@ -183,7 +187,7 @@ impl MockEscrowContract {
             recipient,
             driver,
             token: _env.current_contract_address(),
-            amount: 0,
+            amount: MOCK_ESCROW_AMOUNT,
             status,
             created_at: _env.ledger().timestamp(),
             expires_at: None,
@@ -2790,6 +2794,7 @@ fn test_set_escrow_contract_affects_later_deliveries() {
         env.ledger().timestamp() + shared_types::PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS,
     );
     client.confirm_escrow_contract();
+    set_mock_escrow_parties(&env, &new_escrow_id, &shipper, &recipient, &_driver);
 
     let metadata = get_test_metadata(&env, 1);
     let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
@@ -3143,6 +3148,10 @@ impl MisKeyedEscrowContract {
         false
     }
 
+    pub fn has_escrow(_env: Env, _delivery_id: u64) -> bool {
+        true
+    }
+
     pub fn set_parties(env: Env, sender: Address, recipient: Address, driver: Address) {
         env.storage()
             .instance()
@@ -3221,4 +3230,171 @@ fn test_mark_in_transit_party_check_precedes_locked_check() {
         Err(Ok(err)) => assert_eq!(err, DeliveryError::EscrowNotLocked.into()),
         _ => panic!("Expected DeliveryError::EscrowNotLocked"),
     }
+}
+
+// ── Escrow ownership and state checks in cancel_delivery ─────────────────────
+// `refund_amount` in `delivery_cancelled` must only be non-zero when this call
+// actually refunded an escrow owned by the delivery's sender.
+
+/// Returns the payload of the most recent event with the given topic.
+fn last_event_with_topic(env: &Env, topic: &str) -> Option<Val> {
+    let wanted = Symbol::new(env, topic);
+    let events = env.events().all();
+    let mut found = None;
+    for raw in events.events().iter() {
+        let xdr::ContractEventBody::V0(body) = raw.body.clone();
+        if let Some(first) = body.topics.first() {
+            if let Ok(sym) = Symbol::try_from_val(env, first) {
+                if sym == wanted {
+                    found = Some(Val::try_from_val(env, &body.data).unwrap());
+                }
+            }
+        }
+    }
+    found
+}
+
+fn cancelled_refund_amount(env: &Env) -> i128 {
+    let data = last_event_with_topic(env, "delivery_cancelled").expect("no delivery_cancelled event");
+    let (_, _, amount): (DeliveryId, Address, i128) = TryFromVal::try_from_val(env, &data).unwrap();
+    amount
+}
+
+fn skipped_reason(env: &Env) -> Option<Symbol> {
+    last_event_with_topic(env, "cancel_escrow_skipped").map(|data| {
+        let (_, reason): (DeliveryId, Symbol) = TryFromVal::try_from_val(env, &data).unwrap();
+        reason
+    })
+}
+
+#[test]
+fn test_cancel_delivery_refunds_owned_locked_escrow_and_reports_amount() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    client.assign_driver(&shipper, &delivery_id, &driver);
+
+    client.cancel_delivery(&shipper, &delivery_id);
+
+    // Read events before any further contract call replaces them.
+    assert_eq!(cancelled_refund_amount(&env), MOCK_ESCROW_AMOUNT);
+    assert_eq!(skipped_reason(&env), None);
+
+    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::Cancelled);
+    assert_eq!(
+        mock_escrow_marker(&env, &escrow_id, "refunded"),
+        Some(u64::from(delivery_id))
+    );
+}
+
+#[test]
+fn test_cancel_delivery_ignores_escrow_owned_by_another_sender() {
+    // An escrow under this delivery ID funded by someone else must neither
+    // block the sender's cancellation nor be reported as their refund.
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    client.assign_driver(&shipper, &delivery_id, &driver);
+    let stranger = Address::generate(&env);
+    set_mock_escrow_parties(&env, &escrow_id, &stranger, &recipient, &driver);
+
+    client.cancel_delivery(&shipper, &delivery_id);
+
+    // Read events before any further contract call replaces them.
+    assert_eq!(cancelled_refund_amount(&env), 0);
+    assert_eq!(skipped_reason(&env), Some(Symbol::new(&env, "foreign_escrow")));
+
+    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::Cancelled);
+    assert_eq!(mock_escrow_marker(&env, &escrow_id, "refunded"), None);
+}
+
+#[test]
+fn test_cancel_delivery_ignores_escrow_recorded_for_another_delivery_id() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow_id = env.register(MisKeyedEscrowContract, ());
+    let client = DeliveryContractClient::new(&env, &env.register(DeliveryContract, ()));
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.init(&admin, &escrow_id);
+    let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+    set_mock_escrow_parties(&env, &escrow_id, &admin, &recipient, &Address::generate(&env));
+
+    // MisKeyedEscrowContract has no refund_escrow: if the contract tried to
+    // refund, this call would fail.
+    client.cancel_delivery(&admin, &delivery_id);
+
+    // Read events before any further contract call replaces them.
+    assert_eq!(cancelled_refund_amount(&env), 0);
+    assert_eq!(skipped_reason(&env), Some(Symbol::new(&env, "foreign_escrow")));
+
+    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::Cancelled);
+}
+
+#[test]
+fn test_cancel_delivery_with_already_refunded_escrow_reports_zero() {
+    let env = Env::default();
+    let (client, shipper, _driver, recipient, escrow_id, _) = setup_full(&env);
+    env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::DeliveryCounter, &8887u64);
+    });
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    assert_eq!(u64::from(delivery_id), 8888); // mock reports Refunded
+
+    client.cancel_delivery(&shipper, &delivery_id);
+
+    // Read events before any further contract call replaces them.
+    assert_eq!(cancelled_refund_amount(&env), 0);
+    assert_eq!(skipped_reason(&env), Some(Symbol::new(&env, "already_refunded")));
+
+    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::Cancelled);
+    assert_eq!(mock_escrow_marker(&env, &escrow_id, "refunded"), None);
+}
+
+#[test]
+fn test_cancel_delivery_rejects_owned_escrow_that_is_not_refundable() {
+    // Boundary: an owned escrow that is paused (or in holdback) is under
+    // dispute or settlement, so cancellation must fail instead of silently
+    // dropping the funds from the delivery's lifecycle.
+    for marker in ["disputed", "holdback"] {
+        let env = Env::default();
+        let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+        let delivery_id =
+            client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+        client.assign_driver(&shipper, &delivery_id, &driver);
+        env.as_contract(&escrow_id, || {
+            env.storage()
+                .temporary()
+                .set(&Symbol::new(&env, marker), &u64::from(delivery_id));
+        });
+
+        match client.try_cancel_delivery(&shipper, &delivery_id) {
+            Err(Ok(err)) => assert_eq!(err, DeliveryError::EscrowNotLocked.into()),
+            _ => panic!("Expected DeliveryError::EscrowNotLocked for {marker}"),
+        }
+        assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::Active);
+        assert_eq!(mock_escrow_marker(&env, &escrow_id, "refunded"), None);
+    }
+}
+
+#[test]
+fn test_cancel_delivery_without_escrow_reports_zero() {
+    let env = Env::default();
+    let (client, shipper, _driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    let _: () = env.invoke_contract(
+        &escrow_id,
+        &Symbol::new(&env, "mark_no_escrow"),
+        soroban_sdk::vec![&env, u64::from(delivery_id).into_val(&env)],
+    );
+
+    client.cancel_delivery(&shipper, &delivery_id);
+
+    // Read events before any further contract call replaces them.
+    assert_eq!(cancelled_refund_amount(&env), 0);
+    assert_eq!(skipped_reason(&env), None);
+
+    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::Cancelled);
 }

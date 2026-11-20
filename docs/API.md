@@ -1328,6 +1328,14 @@ dispute, or `reclaim_delivery_expired_escrow` after the escrow expires.
 - `NotAuthorized` - Caller is not sender
 - `TransitAlreadyStarted` - Delivery is `InTransit`; the driver already has custody
 - `InvalidState` - Invalid state transition
+- `EscrowNotLocked` - The sender's escrow is paused, in holdback or settled
+
+**Escrow handling:** the escrow under `delivery_id` is refunded only when its
+`delivery_id` and `sender` match this delivery and it is `Locked`; the
+`delivery_cancelled` event then reports its amount. A foreign escrow or an
+already-refunded escrow is left alone, `refund_amount` is `0`, and a
+`cancel_escrow_skipped` event is published with reason `foreign_escrow` or
+`already_refunded`. With no escrow, `refund_amount` is `0`.
 
 **Events:** `delivery_cancelled`
 
