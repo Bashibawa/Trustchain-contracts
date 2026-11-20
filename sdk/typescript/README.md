@@ -155,6 +155,22 @@ await settlement.clearDriverPreference('GC789...');
 await settlement.getDriverPreference('GC789...'); // null
 ```
 
+`executeSettlementSwap` is called by the escrow contract and requires a
+`deadline` (Unix seconds, `bigint`) no more than 300 seconds after the current
+ledger timestamp:
+
+```typescript
+await settlement.executeSettlementSwap({
+  caller: 'CESC...',
+  fromToken: 'CXLM...',
+  toToken: 'CUSDC...',
+  recipient: 'GC789...',
+  amount: 1_000_000n,
+  minAmountOut: 950_000n,
+  deadline: BigInt(Math.floor(Date.now() / 1000) + 120),
+});
+```
+
 ## Error Handling
 
 The SDK surfaces contract failures as typed error enums so callers can branch on

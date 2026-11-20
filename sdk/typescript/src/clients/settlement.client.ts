@@ -4,7 +4,7 @@
 
 import { ContractInvokeOptions } from '../types/common.types';
 import * as SettlementTypes from '../types/settlement.types';
-import { ContractInvoker, address, i128 } from './invoker';
+import { ContractInvoker, address, i128, u64 } from './invoker';
 
 export class SettlementClient {
   private readonly invoker: ContractInvoker;
@@ -55,6 +55,7 @@ export class SettlementClient {
         address(params.recipient),
         i128(params.amount),
         i128(params.minAmountOut),
+        u64(params.deadline),
       ],
       options
     );

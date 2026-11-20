@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+
 import { nativeToScVal, scValToNative, xdr } from '@stellar/stellar-sdk';
 
 import { SettlementClient } from '../clients/settlement.client';
@@ -37,6 +40,11 @@ function client(): SettlementClient {
 
 function decodeAddress(value: xdr.ScVal): string {
   return scValToNative(value) as string;
+}
+
+/** Discriminant name of an ScVal, e.g. `scvAddress` or `scvU64`. */
+function scValType(value: xdr.ScVal): string {
+  return (value as unknown as { type: string }).type;
 }
 
 afterEach(() => {
@@ -157,5 +165,138 @@ describe('SettlementClient clearDriverPreference', () => {
       'clear_driver_preference',
       'get_driver_preference',
     ]);
+  });
+});
+
+describe('SettlementClient executeSettlementSwap', () => {
+  const DEADLINE = 1_700_000_300n;
+  const swapParams = {
+    caller: ADMIN,
+    fromToken: TOKEN,
+    toToken: TOKEN,
+    recipient: DRIVER,
+    amount: 1_000n,
+    minAmountOut: 950n,
+    deadline: DEADLINE,
+  };
+
+  it('targets execute_settlement_swap with all seven args, deadline last as u64', async () => {
+    const call = mockInvoker({ execute_settlement_swap: [nativeToScVal(null)] });
+
+    await client().executeSettlementSwap(swapParams);
+
+    const [fn, args] = call.mock.calls[0];
+    expect(fn).toBe('execute_settlement_swap');
+    expect(args).toHaveLength(7);
+    expect(decodeAddress(args[0] as xdr.ScVal)).toBe(ADMIN);
+    expect(decodeAddress(args[1] as xdr.ScVal)).toBe(TOKEN);
+    expect(decodeAddress(args[2] as xdr.ScVal)).toBe(TOKEN);
+    expect(decodeAddress(args[3] as xdr.ScVal)).toBe(DRIVER);
+    expect(scValToNative(args[4] as xdr.ScVal)).toBe(1_000n);
+    expect(scValToNative(args[5] as xdr.ScVal)).toBe(950n);
+    const deadline = args[6] as xdr.ScVal;
+    expect(scValType(deadline)).toBe('scvU64');
+    expect(scValToNative(deadline)).toBe(DEADLINE);
+  });
+
+  it('propagates a reverted swap (e.g. InvalidSwapDeadline) to the caller', async () => {
+    jest
+      .spyOn(ContractInvoker.prototype, 'call')
+      .mockRejectedValue(new Error('Soroban simulation failed: SettlementError::InvalidSwapDeadline'));
+
+    await expect(client().executeSettlementSwap(swapParams)).rejects.toThrow('InvalidSwapDeadline');
+  });
+
+  it('encodes the u64 boundaries 0 and 2^64 - 1 exactly', async () => {
+    const call = mockInvoker({});
+    for (const deadline of [0n, 2n ** 64n - 1n]) {
+      await client().executeSettlementSwap({ ...swapParams, deadline });
+    }
+    expect(call.mock.calls.map(([, args]) => scValToNative(args[6] as xdr.ScVal))).toEqual([
+      0n,
+      2n ** 64n - 1n,
+    ]);
+  });
+
+  it.each([-1n, 2n ** 64n])('rejects out-of-range deadline %s before touching the chain', async (deadline) => {
+    const call = mockInvoker({});
+
+    await expect(client().executeSettlementSwap({ ...swapParams, deadline })).rejects.toThrow();
+    expect(call).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Parity with the on-chain signatures: every SettlementClient method must send
+ * exactly the arguments, in order and ScVal type, that the matching `pub fn`
+ * in contracts/settlement_contract/lib.rs declares. This catches drift like a
+ * newly added contract parameter that the SDK never serializes.
+ */
+describe('SettlementClient parity with settlement_contract signatures', () => {
+  const CONTRACT_PATH = path.resolve(__dirname, '../../../../contracts/settlement_contract/lib.rs');
+  const RUST_TO_SCVAL: Record<string, string> = {
+    Address: 'scvAddress',
+    i128: 'scvI128',
+    u64: 'scvU64',
+    u32: 'scvU32',
+    bool: 'scvBool',
+  };
+
+  function contractParams(fnName: string): Array<{ name: string; scType: string }> {
+    const src = fs.readFileSync(CONTRACT_PATH, 'utf8');
+    const match = new RegExp(`pub fn ${fnName}\\s*\\(([^)]*)\\)`).exec(src);
+    if (!match) {
+      throw new Error(`pub fn ${fnName} not found in settlement_contract/lib.rs`);
+    }
+    return match[1]
+      .split(',')
+      .map((param) => param.trim())
+      .filter((param) => param && !/:\s*Env$/.test(param))
+      .map((param) => {
+        const [name, rustType] = param.split(':').map((part) => part.trim());
+        const scType = RUST_TO_SCVAL[rustType];
+        if (!scType) {
+          throw new Error(`No ScVal mapping for Rust type ${rustType} (${fnName}.${name})`);
+        }
+        return { name, scType };
+      });
+  }
+
+  const cases: Array<[string, (c: SettlementClient) => Promise<unknown>]> = [
+    ['init', (c) => c.init({ admin: ADMIN, escrowContract: CONTRACT_ID })],
+    ['get_admin', (c) => c.getAdmin()],
+    ['get_driver_preference', (c) => c.getDriverPreference(DRIVER)],
+    ['set_driver_preference', (c) => c.setDriverPreference({ driver: DRIVER, toToken: TOKEN })],
+    ['clear_driver_preference', (c) => c.clearDriverPreference(DRIVER)],
+    [
+      'execute_settlement_swap',
+      (c) =>
+        c.executeSettlementSwap({
+          caller: ADMIN,
+          fromToken: TOKEN,
+          toToken: TOKEN,
+          recipient: DRIVER,
+          amount: 1n,
+          minAmountOut: 1n,
+          deadline: 1n,
+        }),
+    ],
+  ];
+
+  it.each(cases)('%s arguments match the contract signature', async (fnName, invoke) => {
+    const call = mockInvoker({});
+
+    await invoke(client());
+
+    const [fn, args] = call.mock.calls[0];
+    expect(fn).toBe(fnName);
+    expect((args as xdr.ScVal[]).map(scValType)).toEqual(
+      contractParams(fnName).map((param) => param.scType),
+    );
+  });
+
+  it('execute_settlement_swap declares deadline: u64 as its final parameter', () => {
+    const params = contractParams('execute_settlement_swap');
+    expect(params[params.length - 1]).toEqual({ name: 'deadline', scType: 'scvU64' });
   });
 });

@@ -3026,7 +3026,8 @@ Check whether a driver's reputation score meets the enterprise threshold (≥ 75
 Handles cross-border currency swaps during escrow release, allowing drivers to
 receive payment in their preferred asset via an admin-configured swap router.
 The configured router must implement `swap_exact_tokens_for_tokens` with
-`(caller, from_token, to_token, recipient, amount, min_amount_out)` arguments
+`(caller, from_token, to_token, recipient, amount, min_amount_out, deadline)`
+arguments
 and return the actual `amount_out`. It must consume the approved source amount
 and deliver output directly to `recipient`. The escrow funds the settlement
 contract immediately before invoking the swap. Swaps must execute before the
@@ -3122,6 +3123,10 @@ with the rest of the transaction.
 - `InvalidSwapDeadline` - Deadline is expired or exceeds the 300-second window.
 
 **Returns:** `()`
+
+**TypeScript SDK:** `SettlementClient.executeSettlementSwap({ caller, fromToken,
+toToken, recipient, amount, minAmountOut, deadline })` serializes `deadline`
+(a `bigint` of Unix seconds) as `u64` in the final position.
 
 #### `get_driver_fleet_status`
 Get driver's status in a fleet.
