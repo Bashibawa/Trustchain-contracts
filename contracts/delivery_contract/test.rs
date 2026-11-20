@@ -2995,3 +2995,92 @@ fn test_assign_driver_succeeds_registered_active_driver() {
         DeliveryStatus::Active
     );
 }
+
+// ── Transit cancellation rule ────────────────────────────────────────────────
+// Once the driver has taken custody (`InTransit`) the sender may no longer
+// cancel and claw back the escrow. `reclaim_delivery_expired_escrow` remains
+// the only route from `InTransit` to `Cancelled`.
+
+fn mock_escrow_marker(env: &Env, escrow_id: &Address, key: &str) -> Option<u64> {
+    env.as_contract(escrow_id, || {
+        env.storage().temporary().get(&Symbol::new(env, key))
+    })
+}
+
+#[test]
+fn test_cancel_delivery_rejected_once_in_transit() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    client.assign_driver(&shipper, &delivery_id, &driver);
+    set_mock_escrow_parties(&env, &escrow_id, &shipper, &recipient, &driver);
+    client.mark_in_transit(&driver, &delivery_id);
+
+    let result = client.try_cancel_delivery(&shipper, &delivery_id);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, DeliveryError::TransitAlreadyStarted.into()),
+        _ => panic!("Expected DeliveryError::TransitAlreadyStarted"),
+    }
+
+    // Nothing moved: delivery is still in transit and no refund was requested.
+    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::InTransit);
+    assert_eq!(mock_escrow_marker(&env, &escrow_id, "refunded"), None);
+}
+
+#[test]
+fn test_cancel_delivery_before_transit_still_refunds_sender() {
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    client.assign_driver(&shipper, &delivery_id, &driver);
+    set_mock_escrow_parties(&env, &escrow_id, &shipper, &recipient, &driver);
+
+    client.cancel_delivery(&shipper, &delivery_id);
+
+    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::Cancelled);
+    assert_eq!(
+        mock_escrow_marker(&env, &escrow_id, "refunded"),
+        Some(u64::from(delivery_id))
+    );
+}
+
+#[test]
+fn test_cancel_delivery_in_transit_rejects_non_sender_before_transit_rule() {
+    // Authorization is still checked first: a non-sender gets Unauthorized,
+    // not TransitAlreadyStarted, so the error never leaks delivery state to
+    // an unrelated caller.
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    client.assign_driver(&shipper, &delivery_id, &driver);
+    set_mock_escrow_parties(&env, &escrow_id, &shipper, &recipient, &driver);
+    client.mark_in_transit(&driver, &delivery_id);
+
+    for actor in [&driver, &recipient] {
+        match client.try_cancel_delivery(actor, &delivery_id) {
+            Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+            _ => panic!("Expected TrustchainError::Unauthorized"),
+        }
+    }
+}
+
+#[test]
+fn test_in_transit_delivery_can_only_be_cancelled_via_expired_reclaim() {
+    // Boundary: InTransit -> Cancelled is still a legal state-machine edge,
+    // but only the permissionless expired-escrow reclaim may take it.
+    let env = Env::default();
+    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
+    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
+    client.assign_driver(&shipper, &delivery_id, &driver);
+    set_mock_escrow_parties(&env, &escrow_id, &shipper, &recipient, &driver);
+    client.mark_in_transit(&driver, &delivery_id);
+
+    assert!(client.try_cancel_delivery(&shipper, &delivery_id).is_err());
+    client.reclaim_delivery_expired_escrow(&delivery_id);
+
+    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::Cancelled);
+    assert_eq!(
+        mock_escrow_marker(&env, &escrow_id, "reclaimed"),
+        Some(u64::from(delivery_id))
+    );
+}

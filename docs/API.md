@@ -1306,7 +1306,10 @@ delivery_contract.confirm_delivery(&recipient, &delivery_id);
 ```
 
 #### `cancel_delivery`
-Sender cancels a delivery.
+Sender cancels a delivery. Only allowed while the delivery is `Pending` or
+`Active`; once the driver has called `mark_in_transit` the sender can no longer
+cancel. An in-transit delivery can only end through `confirm_delivery`, a
+dispute, or `reclaim_delivery_expired_escrow` after the escrow expires.
 
 **Parameters:**
 - `sender: Address` - Sender address
@@ -1316,6 +1319,7 @@ Sender cancels a delivery.
 
 **Errors:**
 - `NotAuthorized` - Caller is not sender
+- `TransitAlreadyStarted` - Delivery is `InTransit`; the driver already has custody
 - `InvalidState` - Invalid state transition
 
 **Events:** `delivery_cancelled`

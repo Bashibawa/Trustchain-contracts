@@ -62,6 +62,8 @@ Shared failures such as `InvalidState`, `DeliveryNotFound`, `InsufficientFunds`,
 | 4 | `InvalidDriver` | Driver address matches the delivery's sender or recipient. |
 | 5 | `InvalidParties` | Sender and recipient are the same address. |
 | 6 | `EscrowNotLocked` | The escrow is absent or not locked when funded escrow is required. |
+| 7 | `InvalidIndexKind` | `get_deliveries_page` was called with an index kind other than 0 (sender), 1 (recipient) or 2 (driver). |
+| 8 | `TransitAlreadyStarted` | `cancel_delivery` was called on an `InTransit` delivery; the sender may not cancel once the driver has custody. |
 
 Shared failures such as `InvalidState`, `Unauthorized`, `DeliveryNotFound`, and
 `NotInitialized` use `TrustchainError`.

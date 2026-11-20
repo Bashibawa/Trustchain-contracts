@@ -126,6 +126,11 @@ pub enum DeliveryError {
     /// (currently: the `Active -> InTransit` transition). See Issue #298.
     EscrowNotLocked = 6,
     InvalidIndexKind = 7,
+    /// The sender tried to cancel a delivery whose driver has already taken
+    /// custody (`InTransit`). Once transit begins the sender can no longer
+    /// cancel and reclaim the escrow on their own: the delivery must be
+    /// completed, disputed, or reclaimed after escrow expiry.
+    TransitAlreadyStarted = 8,
 }
 
 mod constants {
@@ -140,7 +145,9 @@ mod constants {
 ///   Active    → InTransit, Disputed, Cancelled
 ///   InTransit → Delivered, Disputed, Cancelled  (Issue #300: Cancelled added so
 ///               reclaim_delivery_expired_escrow can synchronise an in-transit
-///               delivery whose escrow expired)
+///               delivery whose escrow expired. This is the *only* route to
+///               Cancelled from InTransit: `cancel_delivery` rejects it with
+///               `DeliveryError::TransitAlreadyStarted`.)
 ///   Delivered → Disputed
 ///   Disputed  → Delivered (only via dispute resolution)
 ///   Disputed  → Resolved (only via dispute resolution, Issue #447)
@@ -658,6 +665,17 @@ impl DeliveryContract {
         );
     }
 
+    /// Cancel a delivery and refund its escrow to the sender.
+    ///
+    /// **Authorization:** the delivery's sender.
+    ///
+    /// **Transit rule:** cancellation is only allowed from `Pending` or
+    /// `Active`. Once the driver has called `mark_in_transit` they hold the
+    /// goods, so letting the sender cancel would refund the full escrow and
+    /// leave the driver's service unpaid. An `InTransit` delivery is rejected
+    /// with `DeliveryError::TransitAlreadyStarted`; its only exits are
+    /// `confirm_delivery`, a dispute via `dispute_resolution_contract`, or
+    /// `reclaim_delivery_expired_escrow` once the escrow has expired.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn cancel_delivery(env: Env, sender: Address, delivery_id: DeliveryId) {
         sender.require_auth();
@@ -672,6 +690,12 @@ impl DeliveryContract {
 
         if delivery.sender != sender {
             panic_with_error!(&env, TrustchainError::Unauthorized);
+        }
+
+        // The driver has taken custody: the sender cannot unilaterally
+        // cancel and claw back the escrow from here.
+        if delivery.status == DeliveryStatus::InTransit {
+            panic_with_error!(&env, DeliveryError::TransitAlreadyStarted);
         }
 
         validate_transition(delivery.status, DeliveryStatus::Cancelled)
