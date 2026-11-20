@@ -110,6 +110,12 @@ fn setup_swap(partial_router: bool) -> SwapFixture {
     }
 }
 
+/// Deploy a Stellar Asset Contract so preference tests use a real token.
+fn new_token(env: &Env) -> Address {
+    env.register_stellar_asset_contract_v2(Address::generate(env))
+        .address()
+}
+
 /// Amounts passed to `approve` on `token` during the last invocation, in order.
 fn approve_amounts(env: &Env, token: &Address) -> std::vec::Vec<i128> {
     use soroban_sdk::testutils::Events as _;
@@ -161,7 +167,7 @@ fn test_set_and_get_driver_preference() {
     let client = SettlementContractClient::new(&env, &contract_id);
 
     let driver = Address::generate(&env);
-    let to_token = Address::generate(&env);
+    let to_token = new_token(&env);
 
     client.set_driver_preference(&driver, &to_token);
 
@@ -182,7 +188,7 @@ fn test_set_driver_preference_extends_instance_ttl() {
     let admin = Address::generate(&env);
     let escrow = Address::generate(&env);
     let driver = Address::generate(&env);
-    let to_token = Address::generate(&env);
+    let to_token = new_token(&env);
 
     client.init(&admin, &escrow);
     env.ledger().with_mut(|ledger| {
@@ -208,8 +214,8 @@ fn test_driver_preference_is_scoped_per_driver() {
 
     let driver_a = Address::generate(&env);
     let driver_b = Address::generate(&env);
-    let token_a = Address::generate(&env);
-    let token_b = Address::generate(&env);
+    let token_a = new_token(&env);
+    let token_b = new_token(&env);
 
     client.set_driver_preference(&driver_a, &token_a);
     client.set_driver_preference(&driver_b, &token_b);
@@ -227,8 +233,8 @@ fn test_set_driver_preference_overwrites_previous_value() {
     let client = SettlementContractClient::new(&env, &contract_id);
 
     let driver = Address::generate(&env);
-    let first = Address::generate(&env);
-    let second = Address::generate(&env);
+    let first = new_token(&env);
+    let second = new_token(&env);
 
     client.set_driver_preference(&driver, &first);
     client.set_driver_preference(&driver, &second);
@@ -245,7 +251,7 @@ fn test_set_driver_preference_requires_driver_auth() {
     let client = SettlementContractClient::new(&env, &contract_id);
 
     let driver = Address::generate(&env);
-    let to_token = Address::generate(&env);
+    let to_token = new_token(&env);
 
     // No auth is mocked, so the driver's own signature is missing.
     let result = client.try_set_driver_preference(&driver, &to_token);
@@ -448,7 +454,7 @@ fn test_clear_driver_preference_removes() {
     let client = SettlementContractClient::new(&env, &contract_id);
 
     let driver = Address::generate(&env);
-    let to_token = Address::generate(&env);
+    let to_token = new_token(&env);
 
     client.set_driver_preference(&driver, &to_token);
     assert_eq!(client.get_driver_preference(&driver), Some(to_token.clone()));
@@ -619,4 +625,62 @@ fn test_execute_settlement_swap_full_balance_then_insufficient_balance() {
         _ => panic!("Expected InsufficientSwapBalance once the balance is spent"),
     }
     assert_eq!(input.allowance(&f.contract_id, &f.router), 0);
+}
+
+/// An address with no deployed contract behind it cannot be stored as a
+/// payout preference.
+#[test]
+fn test_set_driver_preference_rejects_non_contract_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SettlementContract);
+    let client = SettlementContractClient::new(&env, &contract_id);
+
+    let driver = Address::generate(&env);
+    let not_a_token = Address::generate(&env);
+
+    let result = client.try_set_driver_preference(&driver, &not_a_token);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, SettlementError::InvalidPreferenceToken.into()),
+        _ => panic!("Expected InvalidPreferenceToken for an address with no contract"),
+    }
+    assert_eq!(client.get_driver_preference(&driver), None);
+}
+
+/// A deployed contract that does not implement the token interface is
+/// rejected the same way.
+#[test]
+fn test_set_driver_preference_rejects_non_token_contract() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SettlementContract);
+    let client = SettlementContractClient::new(&env, &contract_id);
+
+    let driver = Address::generate(&env);
+    let router = env.register_contract(None, MockSwapRouter);
+
+    let result = client.try_set_driver_preference(&driver, &router);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, SettlementError::InvalidPreferenceToken.into()),
+        _ => panic!("Expected InvalidPreferenceToken for a non-token contract"),
+    }
+    assert_eq!(client.get_driver_preference(&driver), None);
+}
+
+/// Boundary: a rejected update must not clobber an existing valid preference.
+#[test]
+fn test_rejected_preference_keeps_previous_valid_preference() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SettlementContract);
+    let client = SettlementContractClient::new(&env, &contract_id);
+
+    let driver = Address::generate(&env);
+    let valid = new_token(&env);
+    client.set_driver_preference(&driver, &valid);
+
+    let invalid = Address::generate(&env);
+    assert!(client.try_set_driver_preference(&driver, &invalid).is_err());
+
+    assert_eq!(client.get_driver_preference(&driver), Some(valid));
 }

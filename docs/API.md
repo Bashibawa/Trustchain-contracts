@@ -3067,6 +3067,25 @@ Return the driver's preferred asset for payment, if one has been set.
 
 **Returns:** `Option<Address>`
 
+#### `set_driver_preference`
+Record the asset a driver wants to be paid in, overwriting any previous value.
+
+**Parameters:**
+- `driver: Address` - Driver address (must sign)
+- `to_token: Address` - Payout token contract
+
+`to_token` is probed for the token interface (`decimals()` and `balance()`)
+before it is stored. Account addresses, missing contracts, and contracts that
+do not implement the token interface are rejected, and an existing preference
+is left unchanged.
+
+**Authorization:** Driver (must sign)
+
+**Errors:**
+- `InvalidPreferenceToken` - `to_token` is not a deployed token contract.
+
+**Events:** `driver_preference_updated`
+
 ### Settlement Operations
 
 #### `execute_settlement_swap`
