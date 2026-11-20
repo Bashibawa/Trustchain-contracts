@@ -113,6 +113,36 @@ CONTRACT_ID=$(stellar contract deploy \
 echo "${GREEN}✓ $CONTRACT_NAME deployed: $CONTRACT_ID${NC}" >&2
 echo "" >&2
 
+# Post-deployment verification (#97): read back the WASM that is actually
+# live on-chain for the newly deployed contract ID and hash it, instead of
+# trusting that `stellar contract deploy` exiting 0 means the deployed code
+# matches what we just built. A mismatch here means the deploy did not take
+# effect the way we think it did (wrong network, stale CLI, RPC lag, etc.).
+echo "${BLUE}Verifying on-chain WASM for $CONTRACT_NAME...${NC}" >&2
+LOCAL_WASM_SHA256=$(sha256sum "$WASM_PATH" | awk '{print $1}')
+
+VERIFY_DIR=$(mktemp -d)
+trap 'rm -rf "$VERIFY_DIR"' EXIT
+DEPLOYED_WASM_PATH="$VERIFY_DIR/${CONTRACT_NAME}.deployed.wasm"
+
+if ! stellar contract fetch --id "$CONTRACT_ID" --network "$NETWORK" -o "$DEPLOYED_WASM_PATH" &> /dev/null; then
+    echo "${RED}❌ Could not fetch on-chain WASM for $CONTRACT_ID to verify the deploy.${NC}" >&2
+    exit 1
+fi
+
+DEPLOYED_WASM_SHA256=$(sha256sum "$DEPLOYED_WASM_PATH" | awk '{print $1}')
+
+if [ "$LOCAL_WASM_SHA256" != "$DEPLOYED_WASM_SHA256" ]; then
+    echo "${RED}❌ Deployed WASM hash mismatch for $CONTRACT_NAME!${NC}" >&2
+    echo "   Built locally:   $LOCAL_WASM_SHA256" >&2
+    echo "   Live on $NETWORK: $DEPLOYED_WASM_SHA256" >&2
+    echo "   The contract ID returned by 'stellar contract deploy' does not" >&2
+    echo "   currently serve the code we just built. Treat this deploy as" >&2
+    echo "   failed; do not record $CONTRACT_ID as the deployed address." >&2
+    exit 1
+fi
+echo "${GREEN}✓ On-chain WASM hash matches the local build ($LOCAL_WASM_SHA256)${NC}" >&2
+
 # Merge this contract's ID into any existing output file for this network,
 # so deploying contracts one at a time doesn't clobber previously deployed IDs.
 declare -A DEPLOYED_IDS
