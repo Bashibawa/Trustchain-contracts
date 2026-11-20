@@ -211,6 +211,26 @@ fn calculate_fee(env: &Env, amount: i128, platform_fee_bps: u32) -> i128 {
         .unwrap_or_else(|| panic_with_error!(env, EscrowError::ArithmeticOverflow))
 }
 
+/// Reads the `TotalLocked` accumulator for `token` and returns it increased by
+/// `amount`, aborting with `EscrowError::ArithmeticOverflow` if the sum does
+/// not fit in `i128`.
+///
+/// `TotalLocked` is what `sweep_untracked_balance` subtracts from the contract
+/// balance to decide what is surplus. A saturating add would let the counter
+/// stop growing while deposits continue, so every locked deposit must either
+/// be counted exactly or rejected. Callers run this *before* pulling funds
+/// from the sender and only persist the result once the deposit is accepted.
+fn checked_locked_total(env: &Env, token: &Address, amount: i128) -> i128 {
+    let current_total: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::TotalLocked(token.clone()))
+        .unwrap_or(0);
+    current_total
+        .checked_add(amount)
+        .unwrap_or_else(|| panic_with_error!(env, EscrowError::ArithmeticOverflow))
+}
+
 /// Validates a volume tier list before it is written to storage.
 ///
 /// `get_effective_fee_bps` walks the stored tiers in reverse and returns on
@@ -1237,6 +1257,10 @@ impl EscrowContract {
             None
         };
 
+        // Reject a deposit that would overflow the TotalLocked accumulator
+        // before any funds move.
+        let new_total_locked = checked_locked_total(&env, &token, amount);
+
         token::Client::new(&env, &token).transfer(&sender, env.current_contract_address(), &amount);
         let record_token_clone = token.clone();
         let created_at = env.ledger().timestamp();
@@ -1319,16 +1343,10 @@ impl EscrowContract {
         );
         */
 
-        let token_for_tracking = record_token_clone.clone();
-        let total_locked_key = DataKey::TotalLocked(token_for_tracking.clone());
-        let current_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&total_locked_key)
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&total_locked_key, &current_total.saturating_add(amount));
+        env.storage().persistent().set(
+            &DataKey::TotalLocked(record_token_clone.clone()),
+            &new_total_locked,
+        );
 
         env.events().publish(
             (events::escrow_funded(&env),),
@@ -1389,7 +1407,10 @@ impl EscrowContract {
         */
 
         let mut count = 0u32;
-        let mut batch_total: i128 = 0;
+        // Running TotalLocked including every escrow accepted so far in this
+        // batch. Checked before each transfer so an overflowing element aborts
+        // the whole batch instead of being silently left uncounted.
+        let mut new_total_locked: i128 = checked_locked_total(&env, &token, 0);
         for i in 0..escrow_list.len() {
             if let Some((delivery_id, driver, amount, fleet_id)) = escrow_list.get(i) {
                 if driver == sender || driver == recipient {
@@ -1429,12 +1450,15 @@ impl EscrowContract {
                         None
                     };
 
+                new_total_locked = new_total_locked
+                    .checked_add(amount)
+                    .unwrap_or_else(|| panic_with_error!(&env, EscrowError::ArithmeticOverflow));
+
                 token::Client::new(&env, &token).transfer(
                     &sender,
                     env.current_contract_address(),
                     &amount,
                 );
-                batch_total = batch_total.saturating_add(amount);
                 let created_at = env.ledger().timestamp();
                 let expires_at =
                     created_at.saturating_add(constants::DEFAULT_ESCROW_EXPIRY_SECONDS);
@@ -1539,18 +1563,11 @@ impl EscrowContract {
         // batch-created escrows must count toward TotalLocked exactly like
         // single-escrow creates, otherwise sweep_untracked_balance would treat
         // the batch funds as untracked surplus and drain them. A batch shares
-        // one token, so accumulate in the loop and do a single read-modify-
-        // write here instead of one storage round-trip per element.
-        let total_locked_key = DataKey::TotalLocked(token.clone());
-        let current_total: i128 = env
-            .storage()
+        // one token, so accumulate (with overflow checks) in the loop and do a
+        // single write here instead of one storage round-trip per element.
+        env.storage()
             .persistent()
-            .get(&total_locked_key)
-            .unwrap_or(0);
-        env.storage().persistent().set(
-            &total_locked_key,
-            &current_total.saturating_add(batch_total),
-        );
+            .set(&DataKey::TotalLocked(token.clone()), &new_total_locked);
 
         count
     }

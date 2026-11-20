@@ -1328,6 +1328,94 @@ fn test_total_locked_increases_on_create_escrow() {
     assert_eq!(client.get_total_locked(&token), 3000);
 }
 
+// ── TotalLocked overflow (create_escrow / create_escrows_batch) ──────────────
+
+/// Seeds the TotalLocked accumulator directly so the i128 boundary can be
+/// reached without minting more than i128::MAX of a single token.
+fn seed_total_locked(env: &Env, contract_id: &Address, token: &Address, value: i128) {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalLocked(token.clone()), &value);
+    });
+}
+
+#[test]
+fn test_create_escrow_rejects_total_locked_overflow() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 101);
+    seed_total_locked(&env, &contract_id, &token, i128::MAX - 100);
+
+    // Boundary: landing exactly on i128::MAX is accepted and counted.
+    client.create_escrow(&sender, &recipient, &driver, &14_101u64, &token, &100, &None);
+    assert_eq!(client.get_total_locked(&token), i128::MAX);
+
+    // One more unit would overflow: the deposit is rejected, no funds move,
+    // and no escrow record is written.
+    let result =
+        client.try_create_escrow(&sender, &recipient, &driver, &14_102u64, &token, &1, &None);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, EscrowError::ArithmeticOverflow.into()),
+        other => panic!("expected ArithmeticOverflow, got {other:?}"),
+    }
+    assert_eq!(client.get_total_locked(&token), i128::MAX);
+    assert_eq!(balance(&env, &token, &sender), 1);
+    assert!(client.try_get_escrow(&14_102u64).is_err());
+}
+
+#[test]
+fn test_create_escrows_batch_rejects_total_locked_overflow() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 1_000);
+    seed_total_locked(&env, &contract_id, &token, i128::MAX - 150);
+
+    // Second element pushes the running total past i128::MAX: the whole batch
+    // aborts, including the first (individually valid) element.
+    let overflowing = soroban_sdk::vec![
+        &env,
+        (14_201u64, driver.clone(), 100i128, None::<u64>),
+        (14_202u64, driver.clone(), 100i128, None::<u64>),
+    ];
+    let result = client.try_create_escrows_batch(&sender, &recipient, &token, &overflowing);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, EscrowError::ArithmeticOverflow.into()),
+        other => panic!("expected ArithmeticOverflow, got {other:?}"),
+    }
+    assert_eq!(client.get_total_locked(&token), i128::MAX - 150);
+    assert_eq!(balance(&env, &token, &sender), 1_000);
+    assert!(client.try_get_escrow(&14_201u64).is_err());
+
+    // A batch that lands exactly on the boundary succeeds and is fully counted.
+    let fits = soroban_sdk::vec![
+        &env,
+        (14_203u64, driver.clone(), 100i128, None::<u64>),
+        (14_204u64, driver.clone(), 50i128, None::<u64>),
+    ];
+    assert_eq!(client.create_escrows_batch(&sender, &recipient, &token, &fits), 2);
+    assert_eq!(client.get_total_locked(&token), i128::MAX);
+    assert_eq!(balance(&env, &token, &sender), 850);
+}
+
 #[test]
 fn test_total_locked_decreases_on_release_escrow() {
     let (env, contract_id) = setup_env();

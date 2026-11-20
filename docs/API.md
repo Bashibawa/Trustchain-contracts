@@ -475,6 +475,8 @@ Lock funds for a delivery.
 **Errors:**
 - `DuplicateDelivery` - Escrow already exists for this delivery_id
 - `InsufficientFunds` - Sender balance too low
+- `ArithmeticOverflow` - Adding `amount` to `get_total_locked(token)` would exceed
+  `i128::MAX`; the deposit is rejected before any funds are transferred
 
 **Events:** `escrow_funded`
 
@@ -1003,6 +1005,8 @@ the same token and amount validation as `create_escrow`.
 - `InvalidAmount` - Any element's amount is not positive
 - `DuplicateDelivery` - Escrow already exists for any delivery_id
 - `BatchTooLarge` - Batch size exceeds 100
+- `ArithmeticOverflow` - The running `TotalLocked` (existing total plus the batch
+  elements so far) would exceed `i128::MAX`; the entire batch is aborted
 
 **Events:** `escrow_funded` (once per escrow)
 
