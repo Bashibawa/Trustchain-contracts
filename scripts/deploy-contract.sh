@@ -85,9 +85,14 @@ echo "${GREEN}✓ Prerequisites OK${NC}" >&2
 echo "" >&2
 
 # Build the contract
+# Issue #95: use --locked (matching ci.yml/deploy-testnet.yml/release.yml) so
+# a deployment build always resolves dependencies from the committed
+# Cargo.lock instead of silently re-resolving against whatever newer
+# semver-compatible versions happen to be available, which would make the
+# locally/CI-built WASM non-reproducible across machines and time.
 echo "${BLUE}Building $CONTRACT_NAME...${NC}" >&2
 cd "$PROJECT_ROOT"
-cargo build --target wasm32v1-none --release -p "$CONTRACT_NAME"
+cargo build --locked --target wasm32v1-none --release -p "$CONTRACT_NAME"
 echo "${GREEN}✓ Build successful${NC}" >&2
 echo "" >&2
 

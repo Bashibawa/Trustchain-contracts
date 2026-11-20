@@ -60,9 +60,12 @@ echo "${GREEN}✓ Prerequisites OK${NC}"
 echo ""
 
 # Build contracts
+# Issue #95: --locked, matching ci.yml/deploy-testnet.yml/release.yml, so this
+# deployment build is reproducible from the committed Cargo.lock rather than
+# re-resolving dependency versions at build time.
 echo "${BLUE}Building contracts...${NC}"
 cd "$PROJECT_ROOT"
-cargo build --target wasm32v1-none --release
+cargo build --locked --target wasm32v1-none --release
 
 if [ $? -ne 0 ]; then
     echo "${RED}❌ Build failed${NC}"
