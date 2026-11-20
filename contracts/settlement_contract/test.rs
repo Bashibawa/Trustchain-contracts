@@ -276,7 +276,7 @@ fn test_execute_settlement_swap_requires_initialization() {
     let recipient = Address::generate(&env);
 
     let result =
-        client.try_execute_settlement_swap(&caller, &1u64, &token, &token, &recipient, &100i128, &90i128, &300u64);
+        client.try_execute_settlement_swap(&caller, &1u64, &recipient, &token, &token, &recipient, &100i128, &90i128, &300u64);
     match result {
         Err(Ok(err)) => assert_eq!(err, TrustchainError::NotInitialized.into()),
         _ => panic!("Expected NotInitialized from un-initialized execute_settlement_swap"),
@@ -306,7 +306,7 @@ fn test_execute_settlement_swap_rejects_non_escrow_caller() {
     let recipient = Address::generate(&env);
 
     let result = client
-        .try_execute_settlement_swap(&intruder, &1u64, &token, &token, &recipient, &100i128, &90i128, &300u64);
+        .try_execute_settlement_swap(&intruder, &1u64, &recipient, &token, &token, &recipient, &100i128, &90i128, &300u64);
     match result {
         Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected Unauthorized for a non-escrow caller"),
@@ -330,7 +330,7 @@ fn test_execute_settlement_swap_rejects_same_token_pair() {
     let recipient = Address::generate(&env);
 
     let result = client
-        .try_execute_settlement_swap(&escrow, &1u64, &token, &token, &recipient, &100i128, &90i128, &300u64);
+        .try_execute_settlement_swap(&escrow, &1u64, &recipient, &token, &token, &recipient, &100i128, &90i128, &300u64);
     match result {
         Err(Ok(err)) => assert_eq!(err, SettlementError::InvalidSwapParameters.into()),
         _ => panic!("Expected InvalidSwapParameters for an identical token pair"),
@@ -376,12 +376,14 @@ fn test_execute_settlement_swap_uses_configured_router() {
 
     client.init(&admin, &escrow);
     client.set_swap_router(&admin, &router);
+    client.set_driver_preference(&recipient, &to_token);
     token::StellarAssetClient::new(&env, &from_token).mint(&contract_id, &100);
     token::StellarAssetClient::new(&env, &to_token).mint(&router, &200);
 
     client.execute_settlement_swap(
         &escrow,
         &42u64,
+        &recipient,
         &from_token,
         &to_token,
         &recipient,
@@ -412,6 +414,7 @@ fn test_execute_settlement_swap_rejects_deadline_beyond_window() {
     let too_far = client.try_execute_settlement_swap(
         &escrow,
         &1u64,
+        &recipient,
         &from_token,
         &to_token,
         &recipient,
@@ -424,6 +427,7 @@ fn test_execute_settlement_swap_rejects_deadline_beyond_window() {
     let expired = client.try_execute_settlement_swap(
         &escrow,
         &1u64,
+        &recipient,
         &from_token,
         &to_token,
         &recipient,
@@ -455,7 +459,7 @@ fn test_execute_settlement_swap_rejects_delivery_id_from_non_escrow_caller() {
     let recipient = Address::generate(&env);
 
     let result = client.try_execute_settlement_swap(
-        &intruder, &7u64, &from_token, &to_token, &recipient, &100i128, &90i128, &300u64,
+        &intruder, &7u64, &recipient, &from_token, &to_token, &recipient, &100i128, &90i128, &300u64,
     );
     match result {
         Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
@@ -482,7 +486,7 @@ fn test_execute_settlement_swap_requires_escrow_auth() {
     let recipient = Address::generate(&env);
 
     let result = client.try_execute_settlement_swap(
-        &escrow, &7u64, &from_token, &to_token, &recipient, &100i128, &90i128, &300u64,
+        &escrow, &7u64, &recipient, &from_token, &to_token, &recipient, &100i128, &90i128, &300u64,
     );
     assert!(result.is_err());
 }
@@ -531,6 +535,9 @@ impl ConfigurableSwapRouter {
 struct SwapFixture {
     env: Env,
     client: SettlementContractClient<'static>,
+    contract_id: Address,
+    admin: Address,
+    router: Address,
     escrow: Address,
     from_token: Address,
     to_token: Address,
@@ -556,10 +563,11 @@ fn swap_fixture(delivered: i128, reported: i128) -> SwapFixture {
 
     client.init(&admin, &escrow);
     client.set_swap_router(&admin, &router);
-    token::StellarAssetClient::new(&env, &from_token).mint(&contract_id, &100);
+    client.set_driver_preference(&recipient, &to_token);
+    token::StellarAssetClient::new(&env, &from_token).mint(&contract_id, &300);
     token::StellarAssetClient::new(&env, &to_token).mint(&router, &1_000);
 
-    SwapFixture { env, client, escrow, from_token, to_token, recipient }
+    SwapFixture { env, client, contract_id, admin, router, escrow, from_token, to_token, recipient }
 }
 
 fn swap_events(env: &Env) -> std::vec::Vec<SettlementSwapExecutedEvent> {
@@ -585,7 +593,7 @@ fn test_execute_settlement_swap_emits_event_with_measured_output() {
 
     let returned =
         f.client
-            .execute_settlement_swap(&f.escrow, &55u64, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300);
+            .execute_settlement_swap(&f.escrow, &55u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300);
 
     assert_eq!(returned, 180);
     let events = swap_events(&f.env);
@@ -595,6 +603,7 @@ fn test_execute_settlement_swap_emits_event_with_measured_output() {
         SettlementSwapExecutedEvent {
             escrow_contract: f.escrow.clone(),
             delivery_id: 55,
+            driver: f.recipient.clone(),
             from_token: f.from_token.clone(),
             to_token: f.to_token.clone(),
             recipient: f.recipient.clone(),
@@ -612,7 +621,7 @@ fn test_execute_settlement_swap_rejects_router_that_overreports_output() {
     let f = swap_fixture(100, 500);
 
     let result = f.client.try_execute_settlement_swap(
-        &f.escrow, &56u64, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300,
+        &f.escrow, &56u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300,
     );
 
     match result {
@@ -630,7 +639,7 @@ fn test_execute_settlement_swap_accepts_output_equal_to_minimum() {
     let f = swap_fixture(150, 150);
 
     let returned = f.client.execute_settlement_swap(
-        &f.escrow, &57u64, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300,
+        &f.escrow, &57u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300,
     );
 
     assert_eq!(returned, 150);
@@ -638,4 +647,140 @@ fn test_execute_settlement_swap_accepts_output_equal_to_minimum() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].amount_out, 150);
     assert_eq!(events[0].delivery_id, 57);
+}
+
+// ── Binding swaps to the escrow record / driver commitment ─────────────────
+
+fn assert_settlement_err<T: core::fmt::Debug, C: core::fmt::Debug>(
+    result: Result<Result<T, C>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
+    expected: SettlementError,
+) {
+    match result {
+        Err(Ok(err)) => assert_eq!(err, expected.into()),
+        other => panic!("expected {expected:?}, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_execute_settlement_swap_records_receipt_bound_to_escrow_record() {
+    let f = swap_fixture(180, 180);
+
+    assert_eq!(f.client.get_swap_receipt(&f.escrow, &60u64), None);
+    f.client.execute_settlement_swap(
+        &f.escrow, &60u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300,
+    );
+
+    let receipt = f.client.get_swap_receipt(&f.escrow, &60u64).expect("receipt stored");
+    assert_eq!(receipt.driver, f.recipient);
+    assert_eq!(receipt.recipient, f.recipient);
+    assert_eq!(receipt.from_token, f.from_token);
+    assert_eq!(receipt.to_token, f.to_token);
+    assert_eq!(receipt.amount_in, 100);
+    assert_eq!(receipt.amount_out, 180);
+}
+
+/// The output asset must be the one the driver chose themselves; the escrow
+/// cannot redirect a payout into a different asset.
+#[test]
+fn test_execute_settlement_swap_rejects_asset_not_matching_driver_preference() {
+    let f = swap_fixture(180, 180);
+    let other_driver = Address::generate(&f.env);
+
+    // Driver with no recorded preference.
+    assert_settlement_err(
+        f.client.try_execute_settlement_swap(
+            &f.escrow, &61u64, &other_driver, &f.from_token, &f.to_token, &other_driver, &100, &150, &300,
+        ),
+        SettlementError::PreferenceMismatch,
+    );
+
+    // Driver whose preference is a different asset.
+    let different_asset = Address::generate(&f.env);
+    f.client.set_driver_preference(&other_driver, &different_asset);
+    assert_settlement_err(
+        f.client.try_execute_settlement_swap(
+            &f.escrow, &61u64, &other_driver, &f.from_token, &f.to_token, &other_driver, &100, &150, &300,
+        ),
+        SettlementError::PreferenceMismatch,
+    );
+    assert_eq!(f.client.get_swap_receipt(&f.escrow, &61u64), None);
+}
+
+#[test]
+fn test_execute_settlement_swap_rejects_degenerate_recipients() {
+    let f = swap_fixture(180, 180);
+
+    for bad_recipient in [f.contract_id.clone(), f.router.clone(), f.escrow.clone()] {
+        assert_settlement_err(
+            f.client.try_execute_settlement_swap(
+                &f.escrow, &62u64, &f.recipient, &f.from_token, &f.to_token, &bad_recipient, &100, &150, &300,
+            ),
+            SettlementError::InvalidSwapRecipient,
+        );
+    }
+    assert!(swap_events(&f.env).is_empty());
+}
+
+/// Each escrow record settles at most once: a replayed request for the same
+/// `(escrow, delivery_id)` is rejected even if funds are available.
+#[test]
+fn test_execute_settlement_swap_rejects_replay_for_same_delivery() {
+    let f = swap_fixture(180, 180);
+
+    f.client.execute_settlement_swap(
+        &f.escrow, &63u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300,
+    );
+    assert_settlement_err(
+        f.client.try_execute_settlement_swap(
+            &f.escrow, &63u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300,
+        ),
+        SettlementError::SwapAlreadySettled,
+    );
+    // A different delivery from the same escrow is unaffected.
+    f.client.execute_settlement_swap(
+        &f.escrow, &64u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &150, &300,
+    );
+    assert_eq!(token::Client::new(&f.env, &f.to_token).balance(&f.recipient), 360);
+}
+
+/// Peer rotation: a proposed escrow is not trusted until the timelock elapses
+/// and it is confirmed; afterwards the previous escrow is rejected. Receipts
+/// are scoped per escrow, so the new escrow's delivery IDs do not collide.
+#[test]
+fn test_execute_settlement_swap_trust_follows_confirmed_escrow_rotation() {
+    let f = swap_fixture(50, 50);
+    let new_escrow = Address::generate(&f.env);
+
+    f.client.set_escrow_contract(&f.admin, &new_escrow);
+
+    // Pending: the new escrow is not yet trusted, the old one still is.
+    match f.client.try_execute_settlement_swap(
+        &new_escrow, &1u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &50, &300,
+    ) {
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        other => panic!("pending escrow must be rejected, got {other:?}"),
+    }
+    f.client.execute_settlement_swap(
+        &f.escrow, &1u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &50, &300,
+    );
+
+    f.env.ledger().set_timestamp(
+        f.env.ledger().timestamp() + shared_types::PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS,
+    );
+    f.client.confirm_escrow_contract();
+    let deadline = f.env.ledger().timestamp() + 300;
+
+    // Confirmed: the old escrow is rejected, the new one is trusted and its
+    // delivery #1 is independent of the old escrow's delivery #1.
+    match f.client.try_execute_settlement_swap(
+        &f.escrow, &2u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &50, &deadline,
+    ) {
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        other => panic!("rotated-out escrow must be rejected, got {other:?}"),
+    }
+    f.client.execute_settlement_swap(
+        &new_escrow, &1u64, &f.recipient, &f.from_token, &f.to_token, &f.recipient, &100, &50, &deadline,
+    );
+    assert!(f.client.get_swap_receipt(&f.escrow, &1u64).is_some());
+    assert!(f.client.get_swap_receipt(&new_escrow, &1u64).is_some());
 }

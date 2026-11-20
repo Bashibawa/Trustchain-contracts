@@ -668,6 +668,8 @@ pub struct SettlementSwapExecutedEvent {
     pub escrow_contract: Address,
     /// Escrow delivery ID the swap pays out.
     pub delivery_id: u64,
+    /// Driver whose payout this is and whose preference selected `to_token`.
+    pub driver: Address,
     /// Token sold (the escrow's settlement token).
     pub from_token: Address,
     /// Token bought (the driver's preferred payout asset).

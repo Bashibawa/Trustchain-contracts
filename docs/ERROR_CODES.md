@@ -97,6 +97,9 @@ Shared failures such as `AlreadyInitialized`, `NotInitialized`, `Unauthorized`, 
 | 5 | `InsufficientSwapBalance` | Settlement does not hold the requested input amount. |
 | 6 | `SwapInputNotConsumed` | Router did not consume the exact approved input amount. |
 | 7 | `InvalidSwapDeadline` | Swap deadline is expired or exceeds the 300-second window. |
+| 8 | `PreferenceMismatch` | `to_token` is not the preference the `driver` recorded via `set_driver_preference` (or the driver has none). |
+| 9 | `InvalidSwapRecipient` | Swap recipient is the settlement contract, the swap router, or the escrow caller. |
+| 10 | `SwapAlreadySettled` | A swap for this `(escrow, delivery_id)` already completed; each escrow record settles at most once. |
 
 ## Contracts with no local error enum
 

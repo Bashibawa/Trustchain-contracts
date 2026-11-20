@@ -34,6 +34,34 @@ export class SettlementClient {
   }
 
   /**
+   * Read the receipt of a completed swap for `(escrow, deliveryId)`, or `null`
+   * if that escrow record has not been settled through this contract.
+   */
+  async getSwapReceipt(
+    escrow: string,
+    deliveryId: bigint | number,
+    options?: ContractInvokeOptions
+  ): Promise<SettlementTypes.SwapReceipt | null> {
+    const value = (await this.invoker.call(
+      'get_swap_receipt',
+      [address(escrow), u64(deliveryId)],
+      options
+    )) as Record<string, unknown> | null | undefined;
+    if (value === null || value === undefined) {
+      return null;
+    }
+    return {
+      driver: String(value.driver),
+      recipient: String(value.recipient),
+      fromToken: String(value.from_token),
+      toToken: String(value.to_token),
+      amountIn: BigInt(value.amount_in as bigint),
+      amountOut: BigInt(value.amount_out as bigint),
+      settledAt: BigInt(value.settled_at as bigint),
+    };
+  }
+
+  /**
    * Execute a settlement swap. Resolves to the measured output amount the
    * recipient received; the contract also emits `settlement_swap_executed`.
    */
@@ -46,6 +74,7 @@ export class SettlementClient {
       [
         address(params.caller),
         u64(params.deliveryId),
+        address(params.driver),
         address(params.fromToken),
         address(params.toToken),
         address(params.recipient),

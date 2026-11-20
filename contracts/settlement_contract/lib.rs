@@ -20,6 +20,23 @@ pub enum DataKey {
     /// Per-driver preferred payout asset recorded via
     /// `set_driver_preference` (Issue #459).
     DriverPreference(Address),
+    /// Receipt for a completed swap, keyed by the escrow contract that
+    /// requested it and that escrow's delivery ID. Its presence makes each
+    /// escrow record settleable through this contract at most once.
+    SwapReceipt(Address, u64),
+}
+
+/// Persistent record of a completed settlement swap.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SwapReceipt {
+    pub driver: Address,
+    pub recipient: Address,
+    pub from_token: Address,
+    pub to_token: Address,
+    pub amount_in: i128,
+    pub amount_out: i128,
+    pub settled_at: u64,
 }
 
 #[contracterror]
@@ -33,6 +50,12 @@ pub enum SettlementError {
     InsufficientSwapBalance = 5,
     SwapInputNotConsumed = 6,
     InvalidSwapDeadline = 7,
+    /// `to_token` does not match the driver's own recorded preference.
+    PreferenceMismatch = 8,
+    /// Recipient is the settlement contract, the router, or the escrow caller.
+    InvalidSwapRecipient = 9,
+    /// A swap for this `(escrow, delivery_id)` has already been settled.
+    SwapAlreadySettled = 10,
 }
 
 #[contract]
@@ -232,12 +255,37 @@ impl SettlementContract {
         env.storage().persistent().get(&key)
     }
 
+    /// Return the receipt of a completed swap for `(escrow, delivery_id)`.
+    pub fn get_swap_receipt(env: Env, escrow: Address, delivery_id: u64) -> Option<SwapReceipt> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SwapReceipt(escrow, delivery_id))
+    }
+
     /// Swap escrow-funded tokens through the configured router.
     ///
     /// `delivery_id` identifies the escrow record this swap pays out. It is
     /// supplied by `caller`, which must authenticate and must be the
     /// configured escrow contract, so the identifier is attributable to the
     /// escrow that holds the record rather than to an arbitrary third party.
+    ///
+    /// # Binding and trust boundary
+    ///
+    /// Settlement independently enforces, without trusting the escrow:
+    /// - `to_token` equals the preference `driver` recorded themselves via
+    ///   `set_driver_preference` (driver-signed), so funds cannot be
+    ///   converted into an asset the driver never asked for;
+    /// - `recipient` is not this contract, the router, or the escrow caller;
+    /// - each `(caller, delivery_id)` settles at most once (receipt stored).
+    ///
+    /// Resolving *which* address receives a driver's payout (the driver, a
+    /// fleet treasury, or a payout address snapshotted at escrow creation) is
+    /// escrow state that settlement cannot read during the call (Soroban
+    /// forbids re-entering the escrow), so `recipient` is trusted to the
+    /// configured escrow. That trust is scoped to the currently confirmed
+    /// escrow address: a rotation only takes effect after the
+    /// `PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS` review period, and the
+    /// previous escrow is rejected as soon as the new one is confirmed.
     ///
     /// On success, publishes `settlement_swap_executed` with the token pair,
     /// recipient, consumed input, measured output and escrow reference, and
@@ -246,6 +294,7 @@ impl SettlementContract {
         env: Env,
         caller: Address,
         delivery_id: u64,
+        driver: Address,
         from_token: Address,
         to_token: Address,
         recipient: Address,
@@ -280,6 +329,19 @@ impl SettlementContract {
             panic_with_error!(&env, SettlementError::InvalidSwapParameters);
         }
 
+        let receipt_key = DataKey::SwapReceipt(caller.clone(), delivery_id);
+        if env.storage().persistent().has(&receipt_key) {
+            panic_with_error!(&env, SettlementError::SwapAlreadySettled);
+        }
+
+        let preference: Option<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::DriverPreference(driver.clone()));
+        if preference.as_ref() != Some(&to_token) {
+            panic_with_error!(&env, SettlementError::PreferenceMismatch);
+        }
+
         let router: Address = env
             .storage()
             .instance()
@@ -287,6 +349,10 @@ impl SettlementContract {
             .unwrap_or_else(|| panic_with_error!(&env, SettlementError::SwapRouterNotConfigured));
 
         let current_contract = env.current_contract_address();
+        if recipient == current_contract || recipient == router || recipient == caller {
+            panic_with_error!(&env, SettlementError::InvalidSwapRecipient);
+        }
+
         let input_token = soroban_sdk::token::Client::new(&env, &from_token);
         let balance_before = input_token.balance(&current_contract);
         if balance_before < amount {
@@ -330,11 +396,30 @@ impl SettlementContract {
             panic_with_error!(&env, SettlementError::SwapOutputBelowMinimum);
         }
 
+        env.storage().persistent().set(
+            &receipt_key,
+            &SwapReceipt {
+                driver: driver.clone(),
+                recipient: recipient.clone(),
+                from_token: from_token.clone(),
+                to_token: to_token.clone(),
+                amount_in: amount,
+                amount_out,
+                settled_at: now,
+            },
+        );
+        env.storage().persistent().extend_ttl(
+            &receipt_key,
+            shared_types::ttl::LEDGER_TTL_THRESHOLD,
+            shared_types::ttl::LEDGER_TTL_EXTEND_TO,
+        );
+
         env.events().publish(
             (shared_types::events::settlement_swap_executed(&env),),
             SettlementSwapExecutedEvent {
                 escrow_contract: caller,
                 delivery_id,
+                driver,
                 from_token,
                 to_token,
                 recipient,

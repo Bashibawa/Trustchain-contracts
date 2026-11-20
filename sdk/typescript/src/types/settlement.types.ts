@@ -13,6 +13,8 @@ export interface ExecuteSettlementSwapParams {
   caller: string;
   /** Escrow delivery ID this swap pays out, used to correlate swap and escrow record. */
   deliveryId: bigint | number;
+  /** Driver being paid; `toToken` must equal this driver's recorded preference. */
+  driver: string;
   fromToken: string;
   toToken: string;
   recipient: string;
@@ -30,6 +32,7 @@ export interface ExecuteSettlementSwapParams {
 export interface SettlementSwapExecutedEvent {
   escrowContract: string;
   deliveryId: bigint;
+  driver: string;
   fromToken: string;
   toToken: string;
   recipient: string;
@@ -40,3 +43,14 @@ export interface SettlementSwapExecutedEvent {
 }
 
 export const SETTLEMENT_SWAP_EXECUTED_EVENT = 'settlement_swap_executed';
+
+/** Receipt stored for each completed swap, keyed by `(escrow, deliveryId)`. */
+export interface SwapReceipt {
+  driver: string;
+  recipient: string;
+  fromToken: string;
+  toToken: string;
+  amountIn: bigint;
+  amountOut: bigint;
+  settledAt: bigint;
+}
