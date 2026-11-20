@@ -6,6 +6,11 @@
 set -e
 
 NETWORK=${1:-testnet}
+# Mode: "init" (default) runs the full initialization + peer-contract
+# proposal flow below. "confirm-peers" instead confirms every timelocked
+# peer-contract pointer that was proposed by an earlier "init" run, once the
+# PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS review period has elapsed.
+MODE=${2:-init}
 # Name of the Stellar CLI identity every deploy/initialize script signs with.
 # Overridable, but the default must match the identity provisioned by
 # .github/workflows/deploy-testnet.yml and documented in docs/DEPLOYMENT.md.
@@ -90,6 +95,47 @@ invoke_contract() {
 
 DISPUTE_TIME_LIMIT=${DISPUTE_TIME_LIMIT:-86400}
 DISPUTE_RESOLUTION_LIMIT=${DISPUTE_RESOLUTION_LIMIT:-86400}
+
+if [ "$MODE" = "confirm-peers" ]; then
+    echo "🔐 Confirming timelocked peer-contract pointers on $NETWORK..."
+    echo ""
+
+    echo "Confirming Delivery Contract's escrow_contract..."
+    invoke_contract "$DELIVERY_ID" confirm_escrow_contract
+    echo "✓ Delivery's escrow_contract confirmed"
+
+    echo "Confirming Dispute Resolution Contract's delivery_contract..."
+    invoke_contract "$DISPUTE_ID" confirm_delivery_contract
+    echo "✓ Dispute resolution's delivery_contract confirmed"
+
+    echo "Confirming Dispute Resolution Contract's escrow_contract..."
+    invoke_contract "$DISPUTE_ID" confirm_escrow_contract
+    echo "✓ Dispute resolution's escrow_contract confirmed"
+
+    echo "Confirming Fleet Management Contract's escrow_contract..."
+    invoke_contract "$FLEET_ID" confirm_escrow_contract
+    echo "✓ Fleet management's escrow_contract confirmed"
+
+    echo "Confirming Fleet Management Contract's identity_contract..."
+    invoke_contract "$FLEET_ID" confirm_identity_contract
+    echo "✓ Fleet management's identity_contract confirmed"
+
+    echo "Confirming Identity Reputation Contract's delivery_contract..."
+    invoke_contract "$IDENTITY_ID" confirm_delivery_contract
+    echo "✓ Identity reputation's delivery_contract confirmed"
+
+    echo "Confirming Settlement Contract's escrow_contract..."
+    invoke_contract "$SETTLEMENT_ID" confirm_escrow_contract
+    echo "✓ Settlement's escrow_contract confirmed"
+
+    echo "Confirming Escrow Contract's delivery_contract..."
+    invoke_contract "$ESCROW_ID" confirm_delivery_contract
+    echo "✓ Escrow's delivery_contract confirmed"
+
+    echo ""
+    echo "✅ All timelocked peer-contract pointers confirmed!"
+    exit 0
+fi
 
 echo "Escrow Contract: $ESCROW_ID"
 echo "Delivery Contract: $DELIVERY_ID"
@@ -192,7 +238,18 @@ invoke_contract "$ESCROW_ID" set_fleet_management_contract \
     --admin "$ADMIN_ADDRESS" \
     --fleet_contract "$FLEET_ID"
 
-echo "✓ Contract integrations configured"
+echo "✓ Contract integrations configured (proposed, pending timelock)"
+echo ""
+echo "⏳ Several of the peer-contract pointers above (delivery_contract's"
+echo "   escrow_contract, dispute_resolution_contract's delivery_contract and"
+echo "   escrow_contract, identity_reputation_contract's delivery_contract,"
+echo "   fleet_management_contract's escrow_contract and identity_contract,"
+echo "   settlement_contract's escrow_contract, and escrow_contract's"
+echo "   delivery_contract) are timelocked and only take effect once"
+echo "   confirmed after the review period elapses."
+echo ""
+echo "   Once the timelock has elapsed, run:"
+echo "     ./scripts/initialize-all-contracts.sh $NETWORK confirm-peers"
 echo ""
 echo "✅ All contracts initialized successfully!"
 exit 0
