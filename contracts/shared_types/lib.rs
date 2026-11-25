@@ -42,7 +42,8 @@ pub enum TrustchainError {
 /// Review window applied to changes of cross-contract dependencies.
 pub const PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS: u64 = 3 * 24 * 60 * 60;
 
-/// A staged change to a cross-contract dependency address.
+/// A proposed peer-contract address that becomes active only after
+/// `activates_at` and an explicit confirmation call.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingPeerContractChange {
@@ -278,6 +279,9 @@ pub mod events {
         Symbol::new(env, DELIVERY_CONTRACT_UPDATED)
     }
 
+    // Soroban symbols are capped at 32 bytes; the longer
+    // "identity_reputation_contract_updated" (36 bytes) made `Symbol::new`
+    // trap, reverting every `set_identity_reputation_contract` call.
     pub fn identity_reputation_contract_updated(env: &Env) -> Symbol {
         Symbol::new(env, "identity_contract_updated")
     }
