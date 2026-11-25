@@ -53,7 +53,23 @@ fn setup_test() -> (Env, FleetManagementContractClient<'static>, Address) {
 
     let admin = Address::generate(&env);
     client.init(&admin);
+    // Most tests exercise a standalone fleet with no identity contract, so
+    // they opt into no-identity mode explicitly. Tests of the fail-closed
+    // default use `setup_without_identity_policy`.
+    client.set_identity_optional(&admin, &true);
 
+    (env, client, admin)
+}
+
+/// Like `setup_test`, but leaves the identity policy at its default
+/// (no-identity mode disabled).
+fn setup_without_identity_policy() -> (Env, FleetManagementContractClient<'static>, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(FleetManagementContract, ());
+    let client = FleetManagementContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.init(&admin);
     (env, client, admin)
 }
 
@@ -179,7 +195,7 @@ fn test_admin_reassign_fleet_owner_resets_signers() {
     assert_eq!(client.get_fleet(&fleet_id).owner, owner);
     assert_eq!(
         client
-            .get_pending_fleet_owner_reassignment(&fleet_id)
+            .get_pending_owner_reassignment(&fleet_id)
             .unwrap()
             .new_owner,
         new_owner
@@ -187,7 +203,7 @@ fn test_admin_reassign_fleet_owner_resets_signers() {
     let attacker = Address::generate(&env);
     let wrong_acceptor = client.try_accept_fleet_owner_reassignment(&attacker, &fleet_id);
     match wrong_acceptor {
-        Err(Ok(err)) => assert_eq!(err, FleetError::Unauthorized.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
         _ => panic!("Expected only the proposed owner to accept reassignment"),
     }
     assert_eq!(client.get_fleet(&fleet_id).owner, owner);
@@ -215,7 +231,7 @@ fn test_admin_reassign_fleet_owner_requires_admin() {
     }
 
     assert_eq!(client.get_fleet(&fleet_id).owner, owner);
-    assert_eq!(client.get_pending_fleet_owner_reassignment(&fleet_id), None);
+    assert_eq!(client.get_pending_owner_reassignment(&fleet_id), None);
 }
 
 #[test]
@@ -1762,6 +1778,8 @@ fn test_escrow_payout_routes_through_fleet_treasury() {
     let fleet_client = FleetManagementContractClient::new(&env, &fleet_contract_id);
     let fleet_admin = Address::generate(&env);
     fleet_client.init(&fleet_admin);
+    // No identity contract here: opt into no-identity mode explicitly.
+    fleet_client.set_identity_optional(&fleet_admin, &true);
 
     let escrow_contract_id = env.register(EscrowContract, ());
     let escrow_client = escrow_contract::EscrowContractClient::new(&env, &escrow_contract_id);
@@ -1885,7 +1903,7 @@ fn test_full_protocol_happy_path() {
         &Some(fleet_record_id),
     );
 
-    delivery.assign_driver(&driver, &delivery_record_id, &driver);
+    delivery.assign_driver(&sender, &delivery_record_id, &driver);
     delivery.mark_in_transit(&driver, &delivery_record_id);
     delivery.confirm_delivery(&recipient, &delivery_record_id);
 
@@ -2230,10 +2248,10 @@ fn test_rejected_invitation_leaves_no_slot_and_can_be_retried() {
     assert_eq!(client.get_fleet(&fleet_id).total_active_drivers, 1);
 }
 
-/// Deployments that never configure an identity contract keep the pre-#451
-/// behaviour: accepting an invite is not gated on registration at all.
+/// Deployments that never configure an identity contract and have opted into
+/// no-identity mode (as `setup_test` does) are not gated on registration.
 #[test]
-fn test_accept_invite_unrestricted_without_identity_contract() {
+fn test_accept_invite_unrestricted_in_explicit_no_identity_mode() {
     let (env, client, _admin) = setup_test();
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
@@ -2247,434 +2265,113 @@ fn test_accept_invite_unrestricted_without_identity_contract() {
     );
 }
 
-// ── Fleet counter TTL renewal ────────────────────────────────────────────────
+// ── Identity integration policy (no-identity mode) ───────────────────────────
 
-/// Remaining TTL (in ledgers) of the persistent fleet counter.
-fn fleet_counter_ttl(env: &Env, client: &FleetManagementContractClient) -> u32 {
-    env.as_contract(&client.address, || {
-        env.storage().persistent().get_ttl(&DataKey::FleetCounter)
-    })
-}
-
-/// Advance the ledger far enough that any entry extended to
-/// `LEDGER_TTL_EXTEND_TO` drops below `LEDGER_TTL_THRESHOLD` (and so is
-/// eligible for renewal) while still being live.
-fn advance_past_renewal_threshold(env: &Env) {
-    env.ledger().with_mut(|ledger| {
-        ledger.sequence_number += ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 1_000;
-    });
+fn assert_identity_not_configured<T: core::fmt::Debug>(
+    result: Result<Result<T, soroban_sdk::ConversionError>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
+) {
+    match result {
+        Err(Ok(err)) => assert_eq!(err, FleetError::IdentityNotConfigured.into()),
+        other => panic!("Expected FleetError::IdentityNotConfigured, got {:?}", other),
+    }
 }
 
 #[test]
-fn test_init_renews_fleet_counter_ttl() {
-    let (env, client, _admin) = setup_test();
-    assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
+fn test_identity_optional_defaults_to_false() {
+    let (_env, client, _admin) = setup_without_identity_policy();
+    assert!(!client.get_identity_optional());
 }
 
 #[test]
-fn test_register_fleet_renews_fleet_counter_ttl() {
-    let (env, client, _admin) = setup_test();
-    advance_past_renewal_threshold(&env);
-    assert!(fleet_counter_ttl(&env, &client) < ttl::LEDGER_TTL_THRESHOLD);
-
-    register_fleet(&env, &client);
-
-    assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
-}
-
-#[test]
-fn test_fleet_activity_renews_fleet_counter_ttl() {
-    let (env, client, _admin) = setup_test();
+fn test_add_driver_fails_closed_without_identity_contract() {
+    let (env, client, _admin) = setup_without_identity_policy();
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
-    advance_past_renewal_threshold(&env);
-    assert!(fleet_counter_ttl(&env, &client) < ttl::LEDGER_TTL_THRESHOLD);
+    let driver = Address::generate(&env);
 
-    // Non-registration activity on an existing fleet must keep the counter
-    // alive too, not just the fleet's own records.
-    client.deactivate_fleet(&owner, &fleet_id);
-
-    assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
+    assert_identity_not_configured(client.try_add_driver_to_fleet(
+        &owner,
+        &fleet_id,
+        &driver,
+        &no_co_signers(&env),
+    ));
+    assert_eq!(client.get_driver_fleet_status(&fleet_id, &driver), None);
 }
 
+/// An invite issued while no-identity mode was on cannot be accepted once
+/// the admin turns it off without configuring an identity contract.
 #[test]
-fn test_fleet_counter_survives_quiet_registration_period() {
-    let (env, client, _admin) = setup_test();
+fn test_accept_invite_fails_closed_without_identity_contract() {
+    let (env, client, admin) = setup_test();
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
-    assert_eq!(fleet_id, 1);
-
-    // No new fleet is registered for longer than the counter's full extended
-    // lifetime; only existing-fleet activity happens in between.
-    let mut elapsed = 0u32;
-    while elapsed <= ttl::LEDGER_TTL_EXTEND_TO {
-        advance_past_renewal_threshold(&env);
-        elapsed += ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 1_000;
-        client.deactivate_fleet(&owner, &fleet_id);
-        client.reactivate_fleet(&owner, &fleet_id);
-        // Each gap is shorter than the remaining TTL, and the activity at the
-        // end of it renews the counter back to the full extension, so the
-        // counter never lapses while no fleet is being registered.
-        assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
-    }
-
-    // The counter was renewed throughout, so the next fleet continues the
-    // sequence instead of failing or re-issuing an existing id.
-    let (next_id, _, _) = register_fleet(&env, &client);
-    assert_eq!(next_id, 2);
-    let stored: u64 = env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .get(&DataKey::FleetCounter)
-            .unwrap()
-    });
-    assert_eq!(stored, 2);
-}
-
-#[test]
-fn test_fleet_counter_restored_after_archival_continues_sequence() {
-    let (env, client, _admin) = setup_test();
-    let (first_id, _, _) = register_fleet(&env, &client);
-    assert_eq!(first_id, 1);
-
-    // The whole contract goes quiet for longer than any extended TTL, so the
-    // counter (and instance) lapse. The host restores archived entries with
-    // the minimum TTL when they are next accessed.
-    env.ledger().with_mut(|ledger| {
-        ledger.sequence_number += ttl::LEDGER_TTL_EXTEND_TO + 1;
-    });
-
-    // Restoration preserves the stored value: the next fleet continues the
-    // sequence rather than re-issuing id 1 ...
-    let (next_id, _, _) = register_fleet(&env, &client);
-    assert_eq!(next_id, 2);
-    // ... and the restored counter is immediately renewed to the full
-    // extension instead of being left on the minimal restore TTL.
-    assert_eq!(fleet_counter_ttl(&env, &client), ttl::LEDGER_TTL_EXTEND_TO);
-}
-
-// ── Roster slot / membership TTL synchronisation ─────────────────────────────
-
-fn membership_ttl(
-    env: &Env,
-    client: &FleetManagementContractClient,
-    fleet_id: u64,
-    driver: &Address,
-) -> u32 {
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .get_ttl(&DataKey::DriverFleet(fleet_id, driver.clone()))
-    })
-}
-
-fn roster_slot_ttl(
-    env: &Env,
-    client: &FleetManagementContractClient,
-    fleet_id: u64,
-    index: u32,
-) -> u32 {
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .get_ttl(&DataKey::FleetRoster(fleet_id, index))
-    })
-}
-
-/// Register a fleet and activate `count` drivers; returns (fleet_id, owner, drivers).
-fn fleet_with_active_drivers(
-    env: &Env,
-    client: &FleetManagementContractClient,
-    count: u32,
-) -> (u64, Address, std::vec::Vec<Address>) {
-    let (fleet_id, owner, _treasury) = register_fleet(env, client);
-    let mut drivers = std::vec::Vec::new();
-    for _ in 0..count {
-        let driver = Address::generate(env);
-        client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(env));
-        client.accept_fleet_invite(&fleet_id, &driver);
-        drivers.push(driver);
-    }
-    (fleet_id, owner, drivers)
-}
-
-#[test]
-fn test_accept_invite_gives_slot_and_membership_same_ttl() {
-    let (env, client, _admin) = setup_test();
-    let (fleet_id, _owner, drivers) = fleet_with_active_drivers(&env, &client, 1);
-
-    assert_eq!(
-        membership_ttl(&env, &client, fleet_id, &drivers[0]),
-        ttl::LEDGER_TTL_EXTEND_TO
-    );
-    assert_eq!(
-        roster_slot_ttl(&env, &client, fleet_id, 0),
-        ttl::LEDGER_TTL_EXTEND_TO
-    );
-}
-
-#[test]
-fn test_roster_compaction_renews_moved_driver_membership_with_slot() {
-    let (env, client, _admin) = setup_test();
-    let (fleet_id, owner, drivers) = fleet_with_active_drivers(&env, &client, 3);
-    advance_past_renewal_threshold(&env);
-
-    // Removing slot 0 moves the last driver (drivers[2]) into slot 0.
-    client.remove_driver_from_fleet(&fleet_id, &owner, &drivers[0], &no_co_signers(&env));
-    assert_eq!(
-        client.get_fleet_roster(&fleet_id, &0, &10).get(0).unwrap(),
-        drivers[2]
-    );
-
-    // Divergent expiry: previously only the slot was renewed, so the moved
-    // driver's membership kept its older, shorter TTL.
-    let slot_ttl = roster_slot_ttl(&env, &client, fleet_id, 0);
-    assert_eq!(slot_ttl, ttl::LEDGER_TTL_EXTEND_TO);
-    assert_eq!(
-        membership_ttl(&env, &client, fleet_id, &drivers[2]),
-        slot_ttl
-    );
-}
-
-#[test]
-fn test_renew_fleet_roster_extends_slots_and_memberships_together() {
-    let (env, client, _admin) = setup_test();
-    let (fleet_id, _owner, drivers) = fleet_with_active_drivers(&env, &client, 3);
-    advance_past_renewal_threshold(&env);
-    for (index, driver) in drivers.iter().enumerate() {
-        assert!(roster_slot_ttl(&env, &client, fleet_id, index as u32) < ttl::LEDGER_TTL_THRESHOLD);
-        assert!(membership_ttl(&env, &client, fleet_id, driver) < ttl::LEDGER_TTL_THRESHOLD);
-    }
-
-    let renewed = client.renew_fleet_roster(&fleet_id, &0, &10);
-
-    assert_eq!(renewed, 3);
-    for (index, driver) in drivers.iter().enumerate() {
-        assert_eq!(
-            roster_slot_ttl(&env, &client, fleet_id, index as u32),
-            ttl::LEDGER_TTL_EXTEND_TO
-        );
-        assert_eq!(
-            membership_ttl(&env, &client, fleet_id, driver),
-            ttl::LEDGER_TTL_EXTEND_TO
-        );
-    }
-    let fleet_ttl = env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .get_ttl(&DataKey::Fleet(fleet_id))
-    });
-    assert_eq!(fleet_ttl, ttl::LEDGER_TTL_EXTEND_TO);
-}
-
-#[test]
-fn test_renew_fleet_roster_is_paged_and_clamped() {
-    let (env, client, _admin) = setup_test();
-    let (fleet_id, _owner, drivers) = fleet_with_active_drivers(&env, &client, 3);
-    advance_past_renewal_threshold(&env);
-
-    // Only the requested window is renewed.
-    assert_eq!(client.renew_fleet_roster(&fleet_id, &1, &1), 1);
-    assert!(roster_slot_ttl(&env, &client, fleet_id, 0) < ttl::LEDGER_TTL_THRESHOLD);
-    assert_eq!(
-        roster_slot_ttl(&env, &client, fleet_id, 1),
-        ttl::LEDGER_TTL_EXTEND_TO
-    );
-    assert_eq!(
-        membership_ttl(&env, &client, fleet_id, &drivers[1]),
-        ttl::LEDGER_TTL_EXTEND_TO
-    );
-    assert!(roster_slot_ttl(&env, &client, fleet_id, 2) < ttl::LEDGER_TTL_THRESHOLD);
-
-    // Offsets past the end renew nothing; oversized limits are clamped.
-    assert_eq!(client.renew_fleet_roster(&fleet_id, &3, &10), 0);
-    assert_eq!(client.renew_fleet_roster(&fleet_id, &0, &u32::MAX), 3);
-}
-
-#[test]
-fn test_renew_fleet_roster_unknown_fleet_fails() {
-    let (_env, client, _admin) = setup_test();
-    let result = client.try_renew_fleet_roster(&99, &0, &10);
-    assert_eq!(result, Err(Ok(FleetError::FleetNotFound.into())));
-}
-
-#[test]
-fn test_missing_roster_slot_is_reported_not_silently_skipped() {
-    let (env, client, _admin) = setup_test();
-    let (fleet_id, _owner, _drivers) = fleet_with_active_drivers(&env, &client, 3);
-
-    // Simulate a slot that lapsed independently of its membership record.
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .remove(&DataKey::FleetRoster(fleet_id, 1));
-    });
-
-    // Previously this returned a 2-entry page indistinguishable from a
-    // complete roster.
-    let page = client.try_get_fleet_roster(&fleet_id, &0, &10);
-    assert_eq!(page, Err(Ok(FleetError::InternalStorageError.into())));
-    let renew = client.try_renew_fleet_roster(&fleet_id, &0, &10);
-    assert_eq!(renew, Err(Ok(FleetError::InternalStorageError.into())));
-}
-
-// ── Invite acceptance window ─────────────────────────────────────────────────
-
-fn invite_driver(env: &Env, client: &FleetManagementContractClient) -> (u64, Address, Address) {
-    let (fleet_id, owner, _treasury) = register_fleet(env, client);
-    let driver = Address::generate(env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(env));
-    (fleet_id, owner, driver)
-}
-
-fn advance_seconds(env: &Env, seconds: u64) {
-    env.ledger()
-        .set_timestamp(env.ledger().timestamp() + seconds);
-}
-
-#[test]
-fn test_invite_records_expiry_and_outlives_window_in_storage() {
-    let (env, client, _admin) = setup_test();
-    let issued_at = env.ledger().timestamp();
-    let (fleet_id, _owner, driver) = invite_driver(&env, &client);
-
-    assert_eq!(
-        client.get_invite_expiry(&fleet_id, &driver),
-        Some(issued_at + INVITE_ACCEPTANCE_WINDOW_SECONDS)
-    );
-    // Both invite records carry the full extension, which is longer than the
-    // acceptance window, so the invite cannot be archived while acceptable.
-    assert_eq!(
-        membership_ttl(&env, &client, fleet_id, &driver),
-        ttl::LEDGER_TTL_EXTEND_TO
-    );
-    let expiry_ttl = env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .get_ttl(&DataKey::InviteExpiry(fleet_id, driver.clone()))
-    });
-    assert_eq!(expiry_ttl, ttl::LEDGER_TTL_EXTEND_TO);
-}
-
-#[test]
-fn test_invite_accepted_on_last_second_of_window() {
-    let (env, client, _admin) = setup_test();
-    let (fleet_id, _owner, driver) = invite_driver(&env, &client);
-    advance_seconds(&env, INVITE_ACCEPTANCE_WINDOW_SECONDS);
-
-    assert_eq!(
-        client.get_driver_fleet_status(&fleet_id, &driver),
-        Some(DriverFleetStatus::Pending)
-    );
-    client.accept_fleet_invite(&fleet_id, &driver);
-
-    assert_eq!(
-        client.get_driver_fleet_status(&fleet_id, &driver),
-        Some(DriverFleetStatus::Active)
-    );
-    // The window no longer applies to an active member.
-    assert_eq!(client.get_invite_expiry(&fleet_id, &driver), None);
-    let expiry_present = env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .has(&DataKey::InviteExpiry(fleet_id, driver.clone()))
-    });
-    assert!(!expiry_present);
-}
-
-#[test]
-fn test_expired_invite_is_reported_distinctly_from_never_invited() {
-    let (env, client, _admin) = setup_test();
-    let issued_at = env.ledger().timestamp();
-    let (fleet_id, _owner, driver) = invite_driver(&env, &client);
-    let stranger = Address::generate(&env);
-    advance_seconds(&env, INVITE_ACCEPTANCE_WINDOW_SECONDS + 1);
-
-    assert_eq!(
-        client.get_driver_fleet_status(&fleet_id, &driver),
-        Some(DriverFleetStatus::Expired)
-    );
-    assert_eq!(client.get_driver_fleet_status(&fleet_id, &stranger), None);
-    // The expiry stays queryable after the window closes.
-    assert_eq!(
-        client.get_invite_expiry(&fleet_id, &driver),
-        Some(issued_at + INVITE_ACCEPTANCE_WINDOW_SECONDS)
-    );
-    assert_eq!(client.get_invite_expiry(&fleet_id, &stranger), None);
-
-    assert_eq!(
-        client.try_accept_fleet_invite(&fleet_id, &driver),
-        Err(Ok(FleetError::InviteExpired.into()))
-    );
-    assert_eq!(
-        client.try_accept_fleet_invite(&fleet_id, &stranger),
-        Err(Ok(FleetError::InviteNotFound.into()))
-    );
-    // A rejected acceptance must not touch the roster.
-    assert_eq!(client.get_fleet(&fleet_id).total_active_drivers, 0);
-    assert_eq!(client.get_payout_address(&driver, &fleet_id), driver);
-}
-
-#[test]
-fn test_expired_invite_can_be_reissued_and_accepted() {
-    let (env, client, _admin) = setup_test();
-    let (fleet_id, owner, driver) = invite_driver(&env, &client);
-
-    // An unexpired invite still blocks a duplicate.
-    assert_eq!(
-        client.try_add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env)),
-        Err(Ok(FleetError::DriverAlreadyInvited.into()))
-    );
-
-    advance_seconds(&env, INVITE_ACCEPTANCE_WINDOW_SECONDS + 1);
+    let driver = Address::generate(&env);
     client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
+    client.set_identity_optional(&admin, &false);
 
-    // Re-inviting opens a fresh window.
+    assert_identity_not_configured(client.try_accept_fleet_invite(&fleet_id, &driver));
     assert_eq!(
         client.get_driver_fleet_status(&fleet_id, &driver),
         Some(DriverFleetStatus::Pending)
     );
-    assert_eq!(
-        client.get_invite_expiry(&fleet_id, &driver),
-        Some(env.ledger().timestamp() + INVITE_ACCEPTANCE_WINDOW_SECONDS)
-    );
-    client.accept_fleet_invite(&fleet_id, &driver);
-    assert_eq!(client.get_fleet(&fleet_id).total_active_drivers, 1);
+    assert_eq!(client.get_fleet(&fleet_id).total_active_drivers, 0);
+}
+
+/// A proposed identity contract does not count until confirmed: while it is
+/// still inside its timelock, acceptance fails closed.
+#[test]
+fn test_accept_invite_fails_closed_while_identity_change_is_pending() {
+    let (env, client, admin) = setup_test();
+    let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
+    let driver = Address::generate(&env);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
+    client.set_identity_optional(&admin, &false);
+    client.set_identity_contract(&admin, &env.register(IdentityReputationContract, ()));
+
+    assert_identity_not_configured(client.try_accept_fleet_invite(&fleet_id, &driver));
 }
 
 #[test]
-fn test_cancelling_expired_invite_clears_expiry() {
-    let (env, client, _admin) = setup_test();
-    let (fleet_id, owner, driver) = invite_driver(&env, &client);
-    advance_seconds(&env, INVITE_ACCEPTANCE_WINDOW_SECONDS + 1);
+fn test_no_identity_mode_does_not_bypass_configured_identity() {
+    let (env, client, admin) = setup_test();
+    assert!(client.get_identity_optional());
+    let _identity = setup_with_identity(&env, &client, &admin);
+    let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
-    client.cancel_invite(&owner, &fleet_id, &driver, &no_co_signers(&env));
-
-    assert_eq!(
-        client.get_driver_fleet_status(&fleet_id, &driver),
-        Some(DriverFleetStatus::Removed)
+    let result = client.try_add_driver_to_fleet(
+        &owner,
+        &fleet_id,
+        &Address::generate(&env),
+        &no_co_signers(&env),
     );
-    assert_eq!(client.get_invite_expiry(&fleet_id, &driver), None);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, FleetError::DriverNotRegistered.into()),
+        other => panic!("Expected FleetError::DriverNotRegistered, got {:?}", other),
+    }
 }
 
 #[test]
-fn test_legacy_pending_invite_without_expiry_never_expires() {
-    let (env, client, _admin) = setup_test();
-    let (fleet_id, _owner, driver) = invite_driver(&env, &client);
-    // Simulate an invite issued before acceptance windows existed.
-    env.as_contract(&client.address, || {
-        env.storage()
-            .persistent()
-            .remove(&DataKey::InviteExpiry(fleet_id, driver.clone()));
-    });
-    advance_seconds(&env, INVITE_ACCEPTANCE_WINDOW_SECONDS * 10);
+fn test_registered_driver_accepts_with_identity_and_default_policy() {
+    let (env, client, admin) = setup_without_identity_policy();
+    let identity = setup_with_identity(&env, &client, &admin);
+    let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
+    let driver = Address::generate(&env);
+    identity.register_driver(&driver);
 
-    assert_eq!(
-        client.get_driver_fleet_status(&fleet_id, &driver),
-        Some(DriverFleetStatus::Pending)
-    );
-    assert_eq!(client.get_invite_expiry(&fleet_id, &driver), None);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
+
     assert_eq!(
         client.get_driver_fleet_status(&fleet_id, &driver),
         Some(DriverFleetStatus::Active)
     );
+}
+
+#[test]
+fn test_set_identity_optional_requires_admin() {
+    let (env, client, _admin) = setup_without_identity_policy();
+    let result = client.try_set_identity_optional(&Address::generate(&env), &true);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
+        other => panic!("Expected TrustchainError::Unauthorized, got {:?}", other),
+    }
+    assert!(!client.get_identity_optional());
 }

@@ -60,6 +60,15 @@ non-paginated sender/recipient/driver getters are convenient for small indexes
 but return at most the first 100 records; use the page methods to enumerate
 larger indexes.
 
+**Index storage lifetime.** Each index is stored as 64-ID pages
+(`EscrowIndex` / `DeliveryIndex`) plus a length counter (`EscrowIndexLen` /
+`DeliveryIndexLen`), all persistent. Appending an ID extends the page it
+writes and the length together to `LEDGER_TTL_EXTEND_TO`, and every read
+extends the length and each page it returns IDs from. A full page is never
+written again, so long-idle history is kept alive by reading it (e.g. a
+periodic keeper walking `get_escrows_page` / `get_deliveries_page`); the
+length and the pages in use never expire apart.
+
 ### Interim: Event-Replay Indexing
 
 For off-chain applications requiring advanced queries (e.g., deliveries in a specific date range, by cargo category, or paginated results), the recommended interim approach is **event-replay indexing**:
@@ -340,7 +349,7 @@ leave the delivery contract unconfigured.
 - `Unauthorized` - Caller is not the configured admin
 - `NotInitialized` - Contract has not been initialised
 
-**Events:** `delivery_contract_change_proposed`; confirmation emits
+**Events:** `delivery_contract_proposed`; confirmation emits
 `delivery_contract_updated`.
 
 #### `confirm_delivery_contract`
@@ -935,6 +944,13 @@ Returns the total amount of `token` currently locked across all escrows. This
 is the key metric referenced by `docs/MONITORING.md` and the basis for
 `get_untracked_balance` / `sweep_untracked_balance`.
 
+The underlying `TotalLocked` persistent entry has its TTL extended to
+`LEDGER_TTL_EXTEND_TO` on every escrow creation (single and batch), every
+settlement (release, refund, dispute resolution, reclaim) and every read
+through this getter, so the liability counter cannot expire while the escrows
+it tracks are still live. Returns `0` only for a token that has never been
+locked.
+
 **Parameters:**
 - `token: Address` - The token to query
 
@@ -1200,8 +1216,9 @@ Assign a driver to a delivery.
 - `NotAuthorized` - Caller not admin or driver
 - `DeliveryNotFound` - Invalid delivery_id
 - `InvalidState` - Delivery not in Pending state
-- `ProviderNotFound` - KYC enforcement enabled, identity contract configured, and the driver has no profile
-- `Unauthorized` - KYC enforcement enabled and `driver.kyc_verified` is `false`
+- `ProviderNotFound` - Identity contract configured and the driver has no profile
+- `Unauthorized` - Driver is suspended, or KYC enforcement enabled and `driver.kyc_verified` is `false`
+- `IdentityNotConfigured` - No identity contract configured and no-identity mode not enabled (or `require_kyc` is `true`)
 
 **Events:** `driver_assigned`
 
@@ -1209,14 +1226,20 @@ Assign a driver to a delivery.
 - Sets delivery.driver to specified address
 - Updates status to Active
 
+**Identity integration policy:**
+When an identity contract is configured, `assign_driver` requires the driver
+to have a profile (`has_driver_profile`) that is not suspended. When none is
+configured, `assign_driver` **fails closed** with `IdentityNotConfigured`,
+unless the admin has deliberately enabled no-identity mode with
+`set_identity_optional(admin, true)`. Without this, a partially configured
+deployment would accept arbitrary driver addresses.
+
 **KYC Gate (Issue #314):**
-When `require_kyc` is `true` (set via `set_require_kyc`) **and** the identity
-contract is configured, `assign_driver` cross-calls
-`identity_reputation_contract::has_driver_profile` and
-`get_driver_profile` to confirm the driver exists and has `kyc_verified = true`.
-The gate is silently skipped when no identity contract is configured, so
-deployments that have not wired one up continue to work even with the flag set.
-The default is `false` (gate disabled), preserving all existing flows.
+When `require_kyc` is `true` (set via `set_require_kyc`), `assign_driver`
+also requires `kyc_verified = true` on the driver's profile. KYC cannot be
+checked without an identity contract, so with `require_kyc` set and no
+identity contract, assignment fails with `IdentityNotConfigured` even in
+no-identity mode. The default is `false` (gate disabled).
 
 **Example:**
 ```rust
@@ -1241,8 +1264,34 @@ Enable or disable the KYC gate on `assign_driver` (Issue #314).
 **Notes:**
 - Default is `false` (enforcement disabled).  Existing flows are unaffected
   until an admin explicitly enables this.
-- The gate is silently skipped when no identity contract is configured,
-  even when `required` is `true`.
+- With no identity contract configured, `assign_driver` fails with
+  `IdentityNotConfigured` while `required` is `true`.
+
+#### `set_identity_optional`
+Explicitly enable or disable no-identity mode for `assign_driver`.
+
+**Parameters:**
+- `admin: Address` - Admin address
+- `optional: bool` - `true` to allow assignment without an identity contract
+
+**Authorization:** Admin only
+
+**Events:** `identity_optional_updated` with data `(admin, optional)`
+
+**Notes:**
+- Default is `false`: without an identity contract, `assign_driver` fails
+  closed with `IdentityNotConfigured`.
+- Only matters while no identity contract is configured; once one is set,
+  registration, suspension, and KYC checks always apply.
+
+#### `get_identity_optional`
+Return whether no-identity mode is enabled.
+
+**Parameters:** None
+
+**Returns:** `bool`
+
+**Authorization:** None required
 
 #### `get_require_kyc`
 Return the current KYC-enforcement setting (Issue #314).
@@ -1290,6 +1339,12 @@ Recipient confirms successful delivery.
 - `NotAuthorized` - Caller is not recipient
 - `InvalidState` - Delivery not in InTransit state
 - `EscrowNotConfigured` - Escrow contract not set
+- `EscrowPartyMismatch` - The escrow for this delivery ID is bound to a different driver, sender, or recipient than the delivery record; nothing is changed
+
+Before moving the escrow to holdback, the contract reads the escrow and
+requires its `driver`, `sender`, and `recipient` to equal the delivery's
+assigned driver, sender, and recipient. This prevents a delivery from being
+marked complete while escrow pays (and reputation credits) a different driver.
 
 **Events:** `delivery_confirmed`
 
@@ -1742,6 +1797,39 @@ Configure the identity/reputation contract address used for reputation penalties
 
 **Errors:**
 - `Unauthorized` - Caller is not an admin
+
+#### `set_delivery_contract` / `set_escrow_contract` (dispute resolution)
+Propose a new delivery or escrow peer address for the dispute contract. The
+setter only records a `PendingPeerContractChange` with
+`activates_at = now + PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS` (three days); the
+active `DeliveryContract` / `EscrowContract` pointer is **not** modified, so
+cross-contract calls keep targeting the current peer during the review window.
+A new proposal replaces any earlier pending one.
+
+**Parameters:**
+- `caller: Address` - Dispute admin
+- `delivery_contract` / `escrow_contract: Address` - Proposed peer address
+
+**Authorization:** Dispute admin only
+
+**Events:** `delivery_contract_proposed` / `escrow_contract_change_proposed`
+with `(caller, address, activates_at)`
+
+**Errors:**
+- `Unauthorized` - Caller is not a dispute admin
+
+#### `confirm_delivery_contract` / `confirm_escrow_contract` (dispute resolution)
+Permissionless. Switches the active pointer to the pending address once
+`activates_at` has been reached and clears the proposal, so a proposal is
+applied exactly once. Query pending state with `get_pending_delivery_contract`
+/ `get_pending_escrow_contract`.
+
+**Events:** `delivery_contract_set` / `escrow_contract_set` with
+`(proposed_by, address)`
+
+**Errors:**
+- `NoPendingContractChange` - No proposal is pending (including a second confirm)
+- `ContractChangeTimelockNotElapsed` - Called before `activates_at`
 
 #### `set_escrow_contract`
 Repoint the escrow contract this delivery contract cross-calls for every
@@ -2206,6 +2294,27 @@ Apply the pending identity contract after its three-day review period.
 
 **Errors:** `NoPendingContractChange`, `ContractChangeTimelockNotElapsed`
 
+#### `set_identity_optional` (fleet)
+Explicitly enable or disable no-identity mode for driver invitations and
+acceptances.
+
+**Parameters:**
+- `admin: Address` - Admin address
+- `optional: bool` - `true` to allow `add_driver_to_fleet` / `accept_fleet_invite` without an identity contract
+
+**Authorization:** Admin only
+
+**Events:** `identity_optional_updated` with data `(admin, optional)`
+
+**Notes:**
+- Default is `false`: while no identity contract is configured, both entry
+  points fail closed with `IdentityNotConfigured`.
+- Only matters while no identity contract is configured; once one is
+  confirmed, registration is always required.
+
+#### `get_identity_optional` (fleet)
+Return whether no-identity mode is enabled. **Returns:** `bool`
+
 #### `set_escrow_contract`
 Propose the escrow contract used for fleet pause checks. It becomes active
 after three days and a separate `confirm_escrow_contract` call. The pending
@@ -2323,7 +2432,7 @@ Propose an emergency reassignment for a compromised fleet-owner key. The reassig
 - Stores the pending new owner without changing the fleet profile.
 - Re-proposing replaces the pending target.
 
-**Events:** `fleet_owner_reassignment_proposed`
+**Events:** `fleet_owner_reassign_proposed`
 
 #### `accept_fleet_owner_reassignment`
 Accept a pending admin-proposed owner reassignment. Only the exact proposed address may accept, and it must authorize the call.
@@ -2413,6 +2522,8 @@ Invite a driver to join a fleet.
 - `Unauthorized` - Caller is not an authorized signer
 - `DriverAlreadyInvited` - An unexpired pending invite already exists for this driver
 - `DriverAlreadyActive` - Driver is already an active member
+- `DriverNotRegistered` - The driver has no `DriverProfile` in the configured identity contract
+- `IdentityNotConfigured` - No identity contract is configured and no-identity mode is not enabled
 
 **Events:** `driver_invited`
 
@@ -2458,8 +2569,11 @@ Accept a pending fleet invite.
 - `RosterFull` - The fleet already holds `MAX_ROSTER_SIZE` active drivers
 - `DriverNotRegistered` - The accepting address has no `DriverProfile` in the
   configured identity/reputation contract, so it could never legally complete a
-  delivery (Issue #451). **The check is skipped entirely when no identity
-  contract is configured.**
+  delivery (Issue #451).
+- `IdentityNotConfigured` - No identity contract is configured (or a proposed
+  one is still inside its timelock) and no-identity mode has not been enabled
+  with `set_identity_optional`. The check fails closed so a missing peer
+  cannot admit unregistered drivers.
 
 **Events:** `invite_accepted`
 
@@ -2703,7 +2817,7 @@ active address changes only after three days and a separate
 **Errors:**
 - `Unauthorized` - Caller is not the stored admin
 
-**Events:** `delivery_contract_change_proposed`; confirmation emits
+**Events:** `delivery_contract_proposed`; confirmation emits
 `delivery_contract_updated` - `(admin, delivery_contract)`
 
 #### `confirm_delivery_contract`
@@ -2894,6 +3008,7 @@ pre-checks to avoid an `AlreadyInitialized` panic.
 
 **State Changes:**
 - Creates `DriverProfile` with `reputation_score = 50`, `deliveries_completed = 0`, `kyc_verified = false`
+- For an existing profile, extends its TTL (no other change), so a returning driver's profile is kept live
 
 **Example:**
 ```rust
@@ -2950,6 +3065,44 @@ Check whether a driver profile already exists.
 - `driver: Address` - Driver address
 
 **Returns:** `bool`
+
+Read-only: does not extend TTL (Issue #392). See
+[Driver profile archival recovery](#driver-profile-archival-recovery).
+
+#### `extend_driver_profile_ttl`
+Extend the TTL of an existing driver profile without changing it.
+
+**Parameters:**
+- `driver: Address` - Driver address
+
+**Authorization:** None (permissionless — anyone may pay to keep a profile live)
+
+**Returns:** `DriverProfile`
+
+**Errors:**
+- `ProviderNotFound` - The driver never registered
+
+#### Driver profile archival recovery
+
+`DriverProfile` is persistent storage. Mutations (`register_driver`,
+`update_driver_kyc_status`, reputation changes, `suspend_driver`,
+`reinstate_driver`) extend its TTL to `LEDGER_TTL_EXTEND_TO`; read paths
+(`get_driver_profile`, `has_driver_profile`, `is_driver_suspended`,
+`get_driver_tier`) do not. A driver inactive for longer than that window has
+their profile **archived**, not deleted: history, KYC, and suspension status
+are kept.
+
+To recover, submit any transaction that touches the profile — simulation
+attaches the restore for archived entries. The intended paths are:
+
+- the driver calls `register_driver` again: the existing profile is returned
+  unchanged (no reset, suspension kept) and its TTL is extended;
+- anyone (keeper, fleet operator, admin) calls `extend_driver_profile_ttl`,
+  which needs no signature from the driver.
+
+Off-chain clients must not treat a failed or restore-requiring read as "not
+registered". Operators who want to avoid archival entirely should call
+`extend_driver_profile_ttl` periodically for drivers they want to keep live.
 
 ### Reputation Management
 
