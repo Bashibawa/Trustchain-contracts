@@ -1,7 +1,7 @@
 #![no_std]
 
 use shared_types::{
-    escrow_key, events, is_admin, ttl, DeliveryRecord, DeliveryStatus, EscrowRecord, EscrowStatus,
+    escrow_key, events, is_admin, HIGH_VALUE_DISPUTE_THRESHOLD, ttl, DeliveryRecord, DeliveryStatus, EscrowRecord, EscrowStatus,
     TrustchainError, PendingPeerContractChange, ProtocolConfig, StorageKey,
     HIGH_VALUE_DISPUTE_THRESHOLD,
 };
@@ -1014,7 +1014,7 @@ impl EscrowContract {
             .remove(&DataKey::FleetManagementContract);
         extend_instance_ttl(&env);
         env.events().publish(
-            (Symbol::new(&env, "fleet_management_contract_cleared"),),
+            (Symbol::new(&env, "fleet_contract_cleared"),),
             (admin, env.ledger().timestamp()),
         );
     }
