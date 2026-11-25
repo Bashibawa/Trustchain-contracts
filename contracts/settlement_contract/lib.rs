@@ -16,6 +16,7 @@ use soroban_sdk::{
 pub enum DataKey {
     EscrowContract,
     PendingEscrowContract,
+    /// Trusted swap-router contract used by `execute_settlement_swap`.
     SwapRouter,
     /// Per-driver preferred payout asset recorded via
     /// `set_driver_preference` (Issue #459).
