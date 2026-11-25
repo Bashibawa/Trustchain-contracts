@@ -115,11 +115,13 @@ export class SettlementClient {
   async executeSettlementSwap(
     params: SettlementTypes.ExecuteSettlementSwapParams,
     options?: ContractInvokeOptions
-  ): Promise<void> {
-    await this.invoker.call(
+  ): Promise<bigint> {
+    const amountOut = await this.invoker.call(
       'execute_settlement_swap',
       [
         address(params.caller),
+        u64(params.deliveryId),
+        address(params.driver),
         address(params.fromToken),
         address(params.toToken),
         address(params.recipient),
@@ -129,6 +131,7 @@ export class SettlementClient {
       ],
       options
     );
+    return BigInt(amountOut as bigint);
   }
 }
 

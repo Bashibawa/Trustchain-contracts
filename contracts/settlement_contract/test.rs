@@ -459,11 +459,14 @@ fn test_execute_settlement_swap_uses_configured_router() {
 
     client.init(&admin, &escrow);
     client.set_swap_router(&admin, &router);
+    client.set_driver_preference(&recipient, &to_token);
     token::StellarAssetClient::new(&env, &from_token).mint(&contract_id, &100);
     token::StellarAssetClient::new(&env, &to_token).mint(&router, &200);
 
     client.execute_settlement_swap(
         &escrow,
+        &42u64,
+        &recipient,
         &from_token,
         &to_token,
         &recipient,
@@ -493,6 +496,8 @@ fn test_execute_settlement_swap_rejects_deadline_beyond_window() {
 
     let too_far = client.try_execute_settlement_swap(
         &escrow,
+        &1u64,
+        &recipient,
         &from_token,
         &to_token,
         &recipient,
@@ -504,6 +509,8 @@ fn test_execute_settlement_swap_rejects_deadline_beyond_window() {
 
     let expired = client.try_execute_settlement_swap(
         &escrow,
+        &1u64,
+        &recipient,
         &from_token,
         &to_token,
         &recipient,

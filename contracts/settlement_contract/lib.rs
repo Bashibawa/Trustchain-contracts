@@ -245,6 +245,13 @@ impl SettlementContract {
         env.storage().persistent().get(&key)
     }
 
+    /// Return the receipt of a completed swap for `(escrow, delivery_id)`.
+    pub fn get_swap_receipt(env: Env, escrow: Address, delivery_id: u64) -> Option<SwapReceipt> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::SwapReceipt(escrow, delivery_id))
+    }
+
     /// Swap escrow-funded tokens through the configured router.
     ///
     /// The router is approved for exactly `amount` of `from_token` for the
@@ -255,13 +262,15 @@ impl SettlementContract {
     pub fn execute_settlement_swap(
         env: Env,
         caller: Address,
+        delivery_id: u64,
+        driver: Address,
         from_token: Address,
         to_token: Address,
         recipient: Address,
         amount: i128,
         min_amount_out: i128,
         deadline: u64,
-    ) {
+    ) -> i128 {
         caller.require_auth();
 
         env.storage()
@@ -289,6 +298,19 @@ impl SettlementContract {
             panic_with_error!(&env, SettlementError::InvalidSwapParameters);
         }
 
+        let receipt_key = DataKey::SwapReceipt(caller.clone(), delivery_id);
+        if env.storage().persistent().has(&receipt_key) {
+            panic_with_error!(&env, SettlementError::SwapAlreadySettled);
+        }
+
+        let preference: Option<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::DriverPreference(driver.clone()));
+        if preference.as_ref() != Some(&to_token) {
+            panic_with_error!(&env, SettlementError::PreferenceMismatch);
+        }
+
         let router: Address = env
             .storage()
             .instance()
@@ -296,7 +318,16 @@ impl SettlementContract {
             .unwrap_or_else(|| panic_with_error!(&env, SettlementError::SwapRouterNotConfigured));
 
         let current_contract = env.current_contract_address();
+        if recipient == current_contract || recipient == router || recipient == caller {
+            panic_with_error!(&env, SettlementError::InvalidSwapRecipient);
+        }
+
+        // Pull the input from the escrow inside this call frame. If anything
+        // below fails, the whole frame — including this transfer — is rolled
+        // back, so a failed swap can never strand escrow funds here. The
+        // escrow pre-authorizes exactly this transfer.
         let input_token = soroban_sdk::token::Client::new(&env, &from_token);
+        input_token.transfer(&caller, &current_contract, &amount);
         let balance_before = input_token.balance(&current_contract);
         if balance_before < amount {
             panic_with_error!(&env, SettlementError::InsufficientSwapBalance);
@@ -309,7 +340,10 @@ impl SettlementContract {
 
         input_token.approve(&current_contract, &router, &amount, &expiration_ledger);
 
-        let amount_out: i128 = env.invoke_contract(
+        let output_token = soroban_sdk::token::Client::new(&env, &to_token);
+        let recipient_out_before = output_token.balance(&recipient);
+
+        let reported_amount_out: i128 = env.invoke_contract(
             &router,
             &soroban_sdk::Symbol::new(&env, "swap_exact_tokens_for_tokens"),
             soroban_sdk::vec![
@@ -335,6 +369,49 @@ impl SettlementContract {
         if input_token.balance(&current_contract) != balance_before - amount {
             panic_with_error!(&env, SettlementError::SwapInputNotConsumed);
         }
+        // Measure what the recipient actually received instead of trusting
+        // the router's return value; both must clear the slippage floor.
+        let amount_out = output_token
+            .balance(&recipient)
+            .checked_sub(recipient_out_before)
+            .unwrap_or_else(|| panic_with_error!(&env, SettlementError::InvalidSwapParameters));
+        if amount_out < min_amount_out || reported_amount_out < min_amount_out {
+            panic_with_error!(&env, SettlementError::SwapOutputBelowMinimum);
+        }
+
+        env.storage().persistent().set(
+            &receipt_key,
+            &SwapReceipt {
+                driver: driver.clone(),
+                recipient: recipient.clone(),
+                from_token: from_token.clone(),
+                to_token: to_token.clone(),
+                amount_in: amount,
+                amount_out,
+                settled_at: now,
+            },
+        );
+        env.storage().persistent().extend_ttl(
+            &receipt_key,
+            shared_types::ttl::LEDGER_TTL_THRESHOLD,
+            shared_types::ttl::LEDGER_TTL_EXTEND_TO,
+        );
+
+        env.events().publish(
+            (shared_types::events::settlement_swap_executed(&env),),
+            SettlementSwapExecutedEvent {
+                escrow_contract: caller,
+                delivery_id,
+                driver,
+                from_token,
+                to_token,
+                recipient,
+                amount_in: amount,
+                amount_out,
+            },
+        );
+
+        amount_out
     }
 }
 

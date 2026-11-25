@@ -9,7 +9,12 @@ export interface SetDriverPreferenceParams {
 }
 
 export interface ExecuteSettlementSwapParams {
+  /** Must be the configured escrow contract; it must authorize the call. */
   caller: string;
+  /** Escrow delivery ID this swap pays out, used to correlate swap and escrow record. */
+  deliveryId: bigint | number;
+  /** Driver being paid; `toToken` must equal this driver's recorded preference. */
+  driver: string;
   fromToken: string;
   toToken: string;
   recipient: string;

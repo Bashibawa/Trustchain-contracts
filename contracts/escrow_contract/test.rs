@@ -98,19 +98,21 @@ impl MaliciousSettlementContract {
     pub fn get_driver_preference(env: Env, _driver: Address) -> Option<Address> {
         // Any address different from the escrow's real token forces
         // payout_driver into the execute_settlement_swap path.
-        Some(Address::generate(&env))
+        Some(env.current_contract_address())
     }
 
     pub fn execute_settlement_swap(
         env: Env,
         _caller: Address,
+        _delivery_id: u64,
+        _driver: Address,
         _from_token: Address,
         _to_token: Address,
         _recipient: Address,
         _amount: i128,
         _min_amount_out: i128,
         _deadline: u64,
-    ) {
+    ) -> i128 {
         let target: Address = env
             .storage()
             .instance()
@@ -121,6 +123,7 @@ impl MaliciousSettlementContract {
             &Symbol::new(&env, "release_escrow"),
             soroban_sdk::vec![&env, _recipient.into_val(&env), 900u64.into_val(&env)],
         );
+        0
     }
 }
 
@@ -158,21 +161,23 @@ impl MaliciousPreferenceContract {
         let _: () = env.invoke_contract(
             &target,
             &Symbol::new(&env, "release_escrow"),
-            soroban_sdk::vec![&env, Address::generate(&env).into_val(&env), 0u64.into_val(&env)],
+            soroban_sdk::vec![&env, _driver.into_val(&env), 0u64.into_val(&env)],
         );
-        Some(Address::generate(&env))
+        Some(env.current_contract_address())
     }
 
     pub fn execute_settlement_swap(
         env: Env,
         _caller: Address,
+        _delivery_id: u64,
+        _driver: Address,
         _from_token: Address,
         _to_token: Address,
         _recipient: Address,
         _amount: i128,
         _min_amount_out: i128,
         _deadline: u64,
-    ) {
+    ) -> i128 {
         let target: Address = env
             .storage()
             .instance()
@@ -183,6 +188,7 @@ impl MaliciousPreferenceContract {
             &Symbol::new(&env, "release_escrow"),
             soroban_sdk::vec![&env, _recipient.into_val(&env), 0u64.into_val(&env)],
         );
+        0
     }
 }
 
