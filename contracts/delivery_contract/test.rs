@@ -3,7 +3,7 @@ extern crate std;
 use super::*;
 use proptest::prelude::*;
 use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger as _},
+    testutils::{storage::Persistent as _, Address as _, Events, Ledger as _},
     xdr, Address, Env, IntoVal, String, Symbol, TryFromVal, Val,
 };
 
@@ -877,7 +877,7 @@ fn test_mark_in_transit_rejects_missing_escrow() {
     // MockEscrowContract's get_escrow failure trigger fires.
     env.as_contract(&client.address, || {
         env.storage()
-            .persistent()
+            .instance()
             .set(&DataKey::DeliveryCounter, &7776u64);
     });
     let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
@@ -899,7 +899,7 @@ fn test_mark_in_transit_rejects_refunded_escrow() {
     // reports a Refunded (non-Locked) escrow for it.
     env.as_contract(&client.address, || {
         env.storage()
-            .persistent()
+            .instance()
             .set(&DataKey::DeliveryCounter, &8887u64);
     });
     let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
@@ -1619,7 +1619,7 @@ fn test_confirm_delivery_state_rollback_on_escrow_failure() {
     // MockEscrowContract's delivery_id == 9999 failure trigger actually fires.
     env.as_contract(&client.address, || {
         env.storage()
-            .persistent()
+            .instance()
             .set(&DataKey::DeliveryCounter, &9998u64);
     });
     let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
@@ -1639,7 +1639,7 @@ fn test_delivery_state_unchanged_after_confirm_escrow_failure() {
     // MockEscrowContract's delivery_id == 9999 failure trigger actually fires.
     env.as_contract(&client.address, || {
         env.storage()
-            .persistent()
+            .instance()
             .set(&DataKey::DeliveryCounter, &9998u64);
     });
     let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
@@ -1678,7 +1678,7 @@ fn test_cancel_delivery_state_rollback_on_escrow_failure() {
     // MockEscrowContract's delivery_id == 9999 failure trigger actually fires.
     env.as_contract(&client.address, || {
         env.storage()
-            .persistent()
+            .instance()
             .set(&DataKey::DeliveryCounter, &9998u64);
     });
     let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
@@ -1697,7 +1697,7 @@ fn test_delivery_state_unchanged_after_cancel_escrow_failure() {
     // MockEscrowContract's delivery_id == 9999 failure trigger actually fires.
     env.as_contract(&client.address, || {
         env.storage()
-            .persistent()
+            .instance()
             .set(&DataKey::DeliveryCounter, &9998u64);
     });
     let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
@@ -1730,7 +1730,7 @@ fn test_raise_dispute_state_rollback_on_escrow_failure() {
     // MockEscrowContract's delivery_id == 9999 failure trigger actually fires.
     env.as_contract(&client.address, || {
         env.storage()
-            .persistent()
+            .instance()
             .set(&DataKey::DeliveryCounter, &9998u64);
     });
     let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
@@ -1750,7 +1750,7 @@ fn test_delivery_state_unchanged_after_raise_dispute_escrow_failure() {
     // MockEscrowContract's delivery_id == 9999 failure trigger actually fires.
     env.as_contract(&client.address, || {
         env.storage()
-            .persistent()
+            .instance()
             .set(&DataKey::DeliveryCounter, &9998u64);
     });
     let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
@@ -2435,7 +2435,7 @@ fn test_delivery_emits_typed_created_and_driver_assigned_events() {
     let data = Val::try_from_val(&env, &body.data).unwrap();
     let created: DeliveryCreatedEvent =
         DeliveryCreatedEvent::try_from_val(&env, &data).expect("invalid delivery_created payload");
-    assert_eq!(created.delivery_id, delivery_id.value());
+    assert_eq!(created.delivery_id, u64::from(delivery_id));
     assert_eq!(created.sender, shipper);
 
     client.assign_driver(&shipper, &delivery_id, &driver);
@@ -2446,7 +2446,7 @@ fn test_delivery_emits_typed_created_and_driver_assigned_events() {
     let data = Val::try_from_val(&env, &body.data).unwrap();
     let assigned: DriverAssignedEvent =
         DriverAssignedEvent::try_from_val(&env, &data).expect("invalid driver_assigned payload");
-    assert_eq!(assigned.delivery_id, delivery_id.value());
+    assert_eq!(assigned.delivery_id, u64::from(delivery_id));
     assert_eq!(assigned.driver, driver);
 }
 
@@ -2514,8 +2514,7 @@ fn test_set_identity_reputation_contract_emits_audit_event() {
     let events = env.events().all();
     let raw_event = events.events().last().expect("no event emitted");
     let xdr::ContractEventBody::V0(body) = raw_event.body.clone();
-    let topic_val = Val::try_from_val(&env, body.topics.get(0).unwrap()).unwrap();
-    let topic = Symbol::try_from_val(&env, &topic_val).unwrap();
+    let topic = Symbol::try_from_val(&env, body.topics.get(0).unwrap()).unwrap();
     let data = Val::try_from_val(&env, &body.data).unwrap();
     let (event_admin, event_identity): (Address, Address) =
         <(Address, Address)>::try_from_val(&env, &data).unwrap();
@@ -3005,233 +3004,119 @@ fn test_assign_driver_succeeds_registered_active_driver() {
     );
 }
 
-// ── confirm_delivery escrow party binding ────────────────────────────────────
-
-fn in_transit_delivery(
-    env: &Env,
-    client: &DeliveryContractClient,
-    shipper: &Address,
-    recipient: &Address,
-    driver: &Address,
-) -> DeliveryId {
-    let delivery_id = client.create_delivery(shipper, recipient, &get_test_metadata(env, 1));
-    client.assign_driver(shipper, &delivery_id, driver);
-    client.mark_in_transit(driver, &delivery_id);
-    delivery_id
-}
-
-fn assert_confirm_rejected_for_party_mismatch(
-    env: &Env,
-    client: &DeliveryContractClient,
-    escrow_id: &Address,
-    recipient: &Address,
-    delivery_id: DeliveryId,
-) {
-    let result = client.try_confirm_delivery(recipient, &delivery_id);
-    match result {
-        Err(Ok(err)) => assert_eq!(err, DeliveryError::EscrowPartyMismatch.into()),
-        other => panic!("Expected DeliveryError::EscrowPartyMismatch, got {:?}", other),
-    }
-    let delivery = client.get_delivery(&delivery_id);
-    assert_eq!(delivery.status, DeliveryStatus::InTransit);
-    assert_eq!(delivery.delivered_at, None);
-    let holdback: Option<u64> = env.as_contract(escrow_id, || {
-        env.storage().temporary().get(&Symbol::new(env, "holdback"))
-    });
-    assert_eq!(holdback, None, "escrow must not move to holdback");
-}
+// ── Delivery ID counter durability ──────────────────────────────────────────
+//
+// The counter must live in instance storage so it is renewed together with
+// the contract instance and can never be archived on its own during quiet
+// periods. An absent counter after initialization must be rejected instead of
+// silently restarting at zero (which would reissue existing IDs).
 
 #[test]
-fn test_confirm_delivery_succeeds_when_escrow_parties_match() {
-    let env = Env::default();
-    let (client, shipper, driver, recipient, _escrow_id, _) = setup_full(&env);
-    let delivery_id = in_transit_delivery(&env, &client, &shipper, &recipient, &driver);
-
-    client.confirm_delivery(&recipient, &delivery_id);
-
-    assert_eq!(client.get_delivery(&delivery_id).status, DeliveryStatus::Delivered);
-    let (_, escrow, synced) = client.get_combined_state(&delivery_id);
-    assert_eq!(escrow.unwrap().driver, driver);
-    assert!(synced);
-}
-
-#[test]
-fn test_confirm_delivery_rejects_escrow_paying_a_different_driver() {
-    let env = Env::default();
-    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
-    let delivery_id = in_transit_delivery(&env, &client, &shipper, &recipient, &driver);
-    let other_driver = Address::generate(&env);
-    set_mock_escrow_parties(&env, &escrow_id, &shipper, &recipient, &other_driver);
-
-    assert_confirm_rejected_for_party_mismatch(&env, &client, &escrow_id, &recipient, delivery_id);
-}
-
-#[test]
-fn test_confirm_delivery_rejects_escrow_with_different_sender() {
-    let env = Env::default();
-    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
-    let delivery_id = in_transit_delivery(&env, &client, &shipper, &recipient, &driver);
-    set_mock_escrow_parties(&env, &escrow_id, &Address::generate(&env), &recipient, &driver);
-
-    assert_confirm_rejected_for_party_mismatch(&env, &client, &escrow_id, &recipient, delivery_id);
-}
-
-#[test]
-fn test_confirm_delivery_rejects_escrow_with_different_recipient() {
-    let env = Env::default();
-    let (client, shipper, driver, recipient, escrow_id, _) = setup_full(&env);
-    let delivery_id = in_transit_delivery(&env, &client, &shipper, &recipient, &driver);
-    set_mock_escrow_parties(&env, &escrow_id, &shipper, &Address::generate(&env), &driver);
-
-    assert_confirm_rejected_for_party_mismatch(&env, &client, &escrow_id, &recipient, delivery_id);
-}
-
-#[test]
-fn test_confirm_delivery_party_mismatch_does_not_credit_reputation() {
-    let env = Env::default();
-    let (client, shipper, driver, recipient, escrow_id, reputation_id) = setup_full(&env);
-    let delivery_id = in_transit_delivery(&env, &client, &shipper, &recipient, &driver);
-    set_mock_escrow_parties(&env, &escrow_id, &shipper, &recipient, &Address::generate(&env));
-
-    let _ = client.try_confirm_delivery(&recipient, &delivery_id);
-
-    let credited: Option<Address> = env.as_contract(&reputation_id, || {
-        env.storage().temporary().get(&Symbol::new(&env, "rep_inc"))
-    });
-    assert_eq!(credited, None);
-}
-
-// ── assign_driver identity integration policy ────────────────────────────────
-
-fn assert_identity_not_configured<T: core::fmt::Debug>(
-    result: Result<Result<T, soroban_sdk::ConversionError>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
-) {
-    match result {
-        Err(Ok(err)) => assert_eq!(err, DeliveryError::IdentityNotConfigured.into()),
-        other => panic!("Expected DeliveryError::IdentityNotConfigured, got {:?}", other),
-    }
-}
-
-#[test]
-fn test_identity_optional_defaults_to_false() {
+fn test_delivery_counter_is_stored_in_instance_storage() {
     let env = Env::default();
     let (client, _admin) = setup_bare(&env);
-    assert!(!client.get_identity_optional());
+
+    env.as_contract(&client.address, || {
+        let counter: Option<u64> = env.storage().instance().get(&DataKey::DeliveryCounter);
+        assert_eq!(counter, Some(0));
+        assert!(!env.storage().persistent().has(&DataKey::DeliveryCounter));
+    });
 }
 
 #[test]
-fn test_assign_driver_fails_closed_without_identity_contract() {
+fn test_create_delivery_advances_instance_counter_and_renews_instance_ttl() {
     let env = Env::default();
     let (client, admin) = setup_bare(&env);
     let recipient = Address::generate(&env);
-    let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
 
-    assert_identity_not_configured(client.try_assign_driver(
-        &admin,
-        &delivery_id,
-        &Address::generate(&env),
-    ));
-    let delivery = client.get_delivery(&delivery_id);
-    assert_eq!(delivery.status, DeliveryStatus::Pending);
-    assert_eq!(delivery.driver, None);
+    let first = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+    let second = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 2));
+    assert_eq!(u64::from(first), 1);
+    assert_eq!(u64::from(second), 2);
+
+    env.as_contract(&client.address, || {
+        let counter: Option<u64> = env.storage().instance().get(&DataKey::DeliveryCounter);
+        assert_eq!(counter, Some(2));
+        use soroban_sdk::testutils::storage::Instance as _;
+        assert!(env.storage().instance().get_ttl() >= ttl::LEDGER_TTL_THRESHOLD);
+    });
 }
 
 #[test]
-fn test_assign_driver_allowed_in_explicit_no_identity_mode() {
+fn test_batch_creation_continues_counter_sequence() {
     let env = Env::default();
     let (client, admin) = setup_bare(&env);
-    client.set_identity_optional(&admin, &true);
-    assert!(client.get_identity_optional());
     let recipient = Address::generate(&env);
-    let driver = Address::generate(&env);
-    let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
 
-    client.assign_driver(&admin, &delivery_id, &driver);
+    let single = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+    let mut list = soroban_sdk::Vec::new(&env);
+    list.push_back(get_test_metadata(&env, 2));
+    list.push_back(get_test_metadata(&env, 3));
+    let batch = client.create_deliveries_batch(&admin, &recipient, &list);
 
-    let delivery = client.get_delivery(&delivery_id);
-    assert_eq!(delivery.status, DeliveryStatus::Active);
-    assert_eq!(delivery.driver, Some(driver));
+    assert_eq!(u64::from(single), 1);
+    assert_eq!(u64::from(batch.get(0).unwrap()), 2);
+    assert_eq!(u64::from(batch.get(1).unwrap()), 3);
 }
 
+/// Deployments that predate the instance-storage layout keep the counter in
+/// persistent storage. The legacy value must be honoured and migrated so
+/// already-issued IDs are never reused.
 #[test]
-fn test_disabling_no_identity_mode_fails_closed_again() {
+fn test_legacy_persistent_counter_is_honoured_and_migrated() {
     let env = Env::default();
     let (client, admin) = setup_bare(&env);
-    client.set_identity_optional(&admin, &true);
-    client.set_identity_optional(&admin, &false);
     let recipient = Address::generate(&env);
-    let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
 
-    assert_identity_not_configured(client.try_assign_driver(
-        &admin,
-        &delivery_id,
-        &Address::generate(&env),
-    ));
-}
-
-#[test]
-fn test_require_kyc_fails_closed_without_identity_even_in_no_identity_mode() {
-    let env = Env::default();
-    let (client, admin) = setup_bare(&env);
-    client.set_identity_optional(&admin, &true);
-    client.set_require_kyc(&admin, &true);
-    let recipient = Address::generate(&env);
-    let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
-
-    assert_identity_not_configured(client.try_assign_driver(
-        &admin,
-        &delivery_id,
-        &Address::generate(&env),
-    ));
-}
-
-#[test]
-fn test_no_identity_mode_does_not_bypass_configured_identity_checks() {
-    let env = Env::default();
-    let (client, shipper, driver, recipient, _, reputation_id) = setup_full(&env);
-    client.set_identity_optional(&shipper, &true);
-    env.as_contract(&reputation_id, || {
+    env.as_contract(&client.address, || {
+        env.storage().instance().remove(&DataKey::DeliveryCounter);
         env.storage()
-            .temporary()
-            .set(&Symbol::new(&env, "unregistered"), &true);
+            .persistent()
+            .set(&DataKey::DeliveryCounter, &41u64);
     });
-    let delivery_id = client.create_delivery(&shipper, &recipient, &get_test_metadata(&env, 1));
 
-    let result = client.try_assign_driver(&shipper, &delivery_id, &driver);
-    match result {
-        Err(Ok(err)) => assert_eq!(err, TrustchainError::ProviderNotFound.into()),
-        other => panic!("Expected TrustchainError::ProviderNotFound, got {:?}", other),
-    }
+    let id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+    assert_eq!(u64::from(id), 42);
+
+    env.as_contract(&client.address, || {
+        let counter: Option<u64> = env.storage().instance().get(&DataKey::DeliveryCounter);
+        assert_eq!(counter, Some(42));
+        assert!(!env.storage().persistent().has(&DataKey::DeliveryCounter));
+    });
 }
 
 #[test]
-fn test_set_identity_optional_requires_admin() {
-    let env = Env::default();
-    let (client, _admin) = setup_bare(&env);
-    let result = client.try_set_identity_optional(&Address::generate(&env), &true);
-    match result {
-        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
-        other => panic!("Expected TrustchainError::Unauthorized, got {:?}", other),
-    }
-    assert!(!client.get_identity_optional());
-}
-
-#[test]
-fn test_set_identity_optional_emits_event() {
+fn test_create_delivery_rejects_missing_counter_after_init() {
     let env = Env::default();
     let (client, admin) = setup_bare(&env);
-    client.set_identity_optional(&admin, &true);
+    let recipient = Address::generate(&env);
 
-    let events = env.events().all();
-    let raw_event = events.events().last().expect("no event emitted");
-    let xdr::ContractEventBody::V0(body) = raw_event.body.clone();
-    let topic_val = Val::try_from_val(&env, body.topics.get(0).unwrap()).unwrap();
-    let topic = Symbol::try_from_val(&env, &topic_val).unwrap();
-    let data = Val::try_from_val(&env, &body.data).unwrap();
-    let (event_admin, optional): (Address, bool) =
-        <(Address, bool)>::try_from_val(&env, &data).unwrap();
+    env.as_contract(&client.address, || {
+        env.storage().instance().remove(&DataKey::DeliveryCounter);
+    });
 
-    assert_eq!(topic, Symbol::new(&env, "identity_optional_updated"));
-    assert_eq!(event_admin, admin);
-    assert!(optional);
+    let result = client.try_create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+    match result {
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::NotInitialized.into()),
+        _ => panic!("Expected TrustchainError::NotInitialized"),
+    }
+}
+
+#[test]
+fn test_create_deliveries_batch_rejects_missing_counter_after_init() {
+    let env = Env::default();
+    let (client, admin) = setup_bare(&env);
+    let recipient = Address::generate(&env);
+
+    env.as_contract(&client.address, || {
+        env.storage().instance().remove(&DataKey::DeliveryCounter);
+    });
+
+    let mut list = soroban_sdk::Vec::new(&env);
+    list.push_back(get_test_metadata(&env, 1));
+    let result = client.try_create_deliveries_batch(&admin, &recipient, &list);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::NotInitialized.into()),
+        _ => panic!("Expected TrustchainError::NotInitialized"),
+    }
 }

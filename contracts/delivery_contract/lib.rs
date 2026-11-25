@@ -85,7 +85,66 @@ pub enum DataKey {
     IdentityOptional,
 }
 
+/// Read the delivery ID counter.
+///
+/// The counter is stored in instance storage so that it lives exactly as long
+/// as the contract instance and is renewed by every instance TTL extension.
+/// Deployments that predate this layout kept the counter in persistent
+/// storage; that legacy value is still honoured (and migrated on the next
+/// write) so already-issued IDs are never reused.
+///
+/// An absent counter after initialization is treated as a hard error rather
+/// than silently restarting from zero, because restarting would hand out IDs
+/// that collide with existing delivery records.
+fn read_delivery_counter(env: &Env) -> u64 {
+    if let Some(counter) = env.storage().instance().get(&DataKey::DeliveryCounter) {
+        return counter;
+    }
+    env.storage()
+        .persistent()
+        .get(&DataKey::DeliveryCounter)
+        .unwrap_or_else(|| panic_with_error!(env, TrustchainError::NotInitialized))
+}
+
+/// Persist the delivery ID counter in instance storage, dropping any legacy
+/// persistent copy so only one authoritative value exists.
+fn write_delivery_counter(env: &Env, counter: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::DeliveryCounter, &counter);
+    env.storage()
+        .instance()
+        .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
+    if env.storage().persistent().has(&DataKey::DeliveryCounter) {
+        env.storage().persistent().remove(&DataKey::DeliveryCounter);
+    }
+}
+
+fn next_delivery_counter(env: &Env, counter: u64) -> u64 {
+    counter
+        .checked_add(1)
+        .unwrap_or_else(|| panic_with_error!(env, TrustchainError::InvalidState))
+}
+
 const INDEX_PAGE: u32 = 64;
+
+/// Extend a persistent owner-index entry to the protocol-wide TTL horizon.
+fn extend_index_ttl(env: &Env, key: &DataKey) {
+    env.storage()
+        .persistent()
+        .extend_ttl(key, ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
+}
+
+/// Append `id` to `owner`'s index of the given `kind`.
+///
+/// Invariant: the page and the `DeliveryIndexLen` counter are written together
+/// and always extended together, to the same horizon as the delivery records
+/// they enumerate. A lapsed page under a live length would silently drop IDs
+/// from enumeration; a lapsed length over live pages would make the next push
+/// restart at page 0 and overwrite history. Older, already-full pages are
+/// renewed by `index_page` whenever they are read; renewal on push is kept to
+/// the two entries written so the footprint stays constant however long an
+/// owner's history grows.
 #[rustfmt::skip]
 fn index_push(env: &Env, owner: &Address, kind: u32, id: DeliveryId) {
     let len_key = DataKey::DeliveryIndexLen(owner.clone(), kind);
@@ -96,19 +155,36 @@ fn index_push(env: &Env, owner: &Address, kind: u32, id: DeliveryId) {
     page.push_back(id);
     env.storage().persistent().set(&key, &page);
     env.storage().persistent().set(&len_key, &(len + 1));
+    extend_index_ttl(env, &key);
+    extend_index_ttl(env, &len_key);
 }
 
+/// Read up to `limit` (capped at 100) IDs from `owner`'s index starting at
+/// `offset`. Reading renews the length and every page touched, so listings
+/// that are being consumed stay alive alongside the records they point to.
 #[rustfmt::skip]
 fn index_page(env: &Env, owner: Address, kind: u32, offset: u32, limit: u32) -> soroban_sdk::Vec<DeliveryId> {
-    let len: u32 = env.storage().persistent()
-        .get(&DataKey::DeliveryIndexLen(owner.clone(), kind)).unwrap_or(0);
+    let len_key = DataKey::DeliveryIndexLen(owner.clone(), kind);
+    let len: u32 = env.storage().persistent().get(&len_key).unwrap_or(0);
     let mut out = soroban_sdk::Vec::new(env);
+    if len == 0 {
+        return out;
+    }
+    extend_index_ttl(env, &len_key);
     let end = len.min(offset.saturating_add(limit.min(100)));
+    let mut loaded: Option<(u32, soroban_sdk::Vec<DeliveryId>)> = None;
     for i in offset.min(len)..end {
-        let page: soroban_sdk::Vec<DeliveryId> = env.storage().persistent()
-            .get(&DataKey::DeliveryIndex(owner.clone(), kind, i / INDEX_PAGE))
-            .unwrap_or_else(|| soroban_sdk::Vec::new(env));
-        if let Some(id) = page.get(i % INDEX_PAGE) { out.push_back(id); }
+        let page_no = i / INDEX_PAGE;
+        if loaded.as_ref().map(|(n, _)| *n) != Some(page_no) {
+            let key = DataKey::DeliveryIndex(owner.clone(), kind, page_no);
+            let page: soroban_sdk::Vec<DeliveryId> = env.storage().persistent().get(&key)
+                .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+            if !page.is_empty() { extend_index_ttl(env, &key); }
+            loaded = Some((page_no, page));
+        }
+        if let Some((_, page)) = loaded.as_ref() {
+            if let Some(id) = page.get(i % INDEX_PAGE) { out.push_back(id); }
+        }
     }
     out
 }
@@ -234,14 +310,11 @@ impl DeliveryContract {
         env.storage()
             .instance()
             .set(&DataKey::EscrowContract, &escrow_contract);
-        env.storage()
-            .persistent()
-            .set(&DataKey::DeliveryCounter, &0u64);
-        env.storage().persistent().extend_ttl(
-            &DataKey::DeliveryCounter,
-            ttl::LEDGER_TTL_THRESHOLD,
-            ttl::LEDGER_TTL_EXTEND_TO,
-        );
+        // The delivery ID counter lives in instance storage so it shares the
+        // contract instance's lifetime and can never be archived independently
+        // during quiet periods (which would otherwise reset IDs to zero and
+        // collide with still-live delivery records).
+        write_delivery_counter(&env, 0);
 
         env.events().publish(
             (events::delivery_contract_initialized(&env),),
@@ -516,20 +589,8 @@ impl DeliveryContract {
             .instance()
             .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
 
-        let mut counter: u64 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::DeliveryCounter)
-            .unwrap_or(0);
-        counter += 1;
-        env.storage()
-            .persistent()
-            .set(&DataKey::DeliveryCounter, &counter);
-        env.storage().persistent().extend_ttl(
-            &DataKey::DeliveryCounter,
-            ttl::LEDGER_TTL_THRESHOLD,
-            ttl::LEDGER_TTL_EXTEND_TO,
-        );
+        let counter = next_delivery_counter(&env, read_delivery_counter(&env));
+        write_delivery_counter(&env, counter);
 
         let delivery_id = DeliveryId::from(counter);
 
@@ -619,25 +680,20 @@ impl DeliveryContract {
         }
 
         let mut result = soroban_sdk::Vec::new(&env);
-        let mut counter: u64 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::DeliveryCounter)
-            .unwrap_or(0);
+        // Keep the instance (and therefore the delivery counter) alive for
+        // batch creation exactly as `create_delivery` does.
+        env.storage()
+            .instance()
+            .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
+
+        let mut counter: u64 = read_delivery_counter(&env);
 
         let timestamp = env.ledger().timestamp();
 
         for i in 0..metadata_list.len() {
             if let Some(mut metadata) = metadata_list.get(i) {
-                counter += 1;
-                env.storage()
-                    .persistent()
-                    .set(&DataKey::DeliveryCounter, &counter);
-                env.storage().persistent().extend_ttl(
-                    &DataKey::DeliveryCounter,
-                    ttl::LEDGER_TTL_THRESHOLD,
-                    ttl::LEDGER_TTL_EXTEND_TO,
-                );
+                counter = next_delivery_counter(&env, counter);
+                write_delivery_counter(&env, counter);
 
                 let delivery_id = DeliveryId::from(counter);
                 // See create_delivery: overwrite with the real generated ID
