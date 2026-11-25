@@ -25,9 +25,10 @@ fn arm_reentrant_mock(env: &Env, target: &Address, attacker: &Address, method: &
 
 proptest! {
     #[test]
-    fn split_conserves_funds(amount in 0i128..i128::MAX, bps in 0u32..=10_000) {
-        let sender = amount.saturating_mul(bps as i128) / 10_000;
-        prop_assert_eq!(sender + amount.saturating_sub(sender), amount);
+    fn split_conserves_funds(amount in 0i128..=i128::MAX, bps in 0u32..=10_000) {
+        let sender = checked_bps_share(amount, bps).expect("in-range split is supported");
+        prop_assert!((0..=amount).contains(&sender));
+        prop_assert_eq!(sender + (amount - sender), amount);
     }
 
     #[test]
@@ -966,7 +967,7 @@ proptest! {
         amount in 0i128..i128::MAX,
         platform_fee_bps in 0u32..=10000u32,
     ) {
-        let fee = calculate_fee(amount, platform_fee_bps);
+        let fee = checked_bps_share(amount, platform_fee_bps).expect("in-range inputs are supported");
         assert!(fee >= 0, "fee must be non-negative: got {fee} for amount={amount} bps={platform_fee_bps}");
         assert!(fee <= amount, "fee {fee} must not exceed amount {amount} for bps={platform_fee_bps}");
     }
@@ -975,7 +976,7 @@ proptest! {
     fn test_calculate_fee_zero_bps_yields_zero(
         amount in 0i128..i128::MAX,
     ) {
-        let fee = calculate_fee(amount, 0);
+        let fee = checked_bps_share(amount, 0).unwrap();
         assert_eq!(fee, 0, "fee must be zero when bps=0, got {fee} for amount={amount}");
     }
 
@@ -983,9 +984,85 @@ proptest! {
     fn test_calculate_fee_zero_amount_yields_zero(
         platform_fee_bps in 0u32..=10000u32,
     ) {
-        let fee = calculate_fee(0, platform_fee_bps);
+        let fee = checked_bps_share(0, platform_fee_bps).unwrap();
         assert_eq!(fee, 0, "fee must be zero when amount=0, got {fee} for bps={platform_fee_bps}");
     }
+
+    /// Wherever the naive product fits in i128 the quotient/remainder form
+    /// must agree with it exactly.
+    #[test]
+    fn test_checked_bps_share_matches_naive_product(
+        amount in 0i128..(i128::MAX / 10_000),
+        bps in 0u32..=10_000u32,
+    ) {
+        prop_assert_eq!(
+            checked_bps_share(amount, bps),
+            Some(amount * bps as i128 / 10_000)
+        );
+    }
+}
+
+// ── Escrow fee overflow (calculate_fee) ──────────────────────────────────────
+
+#[test]
+fn test_calculate_fee_exact_near_i128_boundary() {
+    // amount * 1000 overflows i128 here; the old `saturating_mul` clamped the
+    // product to i128::MAX and returned i128::MAX / 10_000 instead of 10%.
+    let amount = i128::MAX;
+    let q = amount / 10_000;
+    let r = amount % 10_000;
+    let expected = q * 1_000 + r * 1_000 / 10_000;
+
+    assert_eq!(checked_bps_share(amount, 1_000), Some(expected));
+    assert_ne!(expected, amount.saturating_mul(1_000) / 10_000);
+    // 100% returns the amount itself, even at the boundary.
+    assert_eq!(checked_bps_share(i128::MAX, 10_000), Some(i128::MAX));
+    // Smallest amount whose naive product overflows at the max platform fee.
+    let first_overflow = i128::MAX / 1_000 + 1;
+    assert_eq!(
+        checked_bps_share(first_overflow, 1_000),
+        Some(first_overflow / 10)
+    );
+}
+
+#[test]
+fn test_calculate_fee_rejects_unsupported_inputs() {
+    assert_eq!(checked_bps_share(-1, 500), None);
+    assert_eq!(checked_bps_share(i128::MIN, 500), None);
+    assert_eq!(checked_bps_share(1_000, 10_001), None);
+    assert_eq!(checked_bps_share(1_000, u32::MAX), None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")] // EscrowError::ArithmeticOverflow
+fn test_calculate_fee_aborts_on_unsupported_amount() {
+    let (env, contract_id) = setup_env();
+    env.as_contract(&contract_id, || calculate_fee(&env, -1, 500));
+}
+
+#[test]
+fn test_release_escrow_charges_exact_fee_on_boundary_amount() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &1_000); // 10%, the protocol maximum
+    let amount = i128::MAX;
+    mint(&env, &token, &sender, amount);
+
+    client.create_escrow(&sender, &recipient, &driver, &14_001u64, &token, &amount, &None);
+    client.release_escrow(&recipient, &14_001u64);
+
+    let expected_fee = checked_bps_share(amount, 1_000).unwrap();
+    assert_eq!(balance(&env, &token, &admin), expected_fee);
+    assert_eq!(balance(&env, &token, &driver), amount - expected_fee);
+    assert_eq!(balance(&env, &token, &contract_id), 0);
 }
 
 #[test]
@@ -1272,6 +1349,94 @@ fn test_total_locked_increases_on_create_escrow() {
 
     client.create_escrow(&sender, &recipient, &driver, &301u64, &token, &2000, &None);
     assert_eq!(client.get_total_locked(&token), 3000);
+}
+
+// ── TotalLocked overflow (create_escrow / create_escrows_batch) ──────────────
+
+/// Seeds the TotalLocked accumulator directly so the i128 boundary can be
+/// reached without minting more than i128::MAX of a single token.
+fn seed_total_locked(env: &Env, contract_id: &Address, token: &Address, value: i128) {
+    env.as_contract(contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalLocked(token.clone()), &value);
+    });
+}
+
+#[test]
+fn test_create_escrow_rejects_total_locked_overflow() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 101);
+    seed_total_locked(&env, &contract_id, &token, i128::MAX - 100);
+
+    // Boundary: landing exactly on i128::MAX is accepted and counted.
+    client.create_escrow(&sender, &recipient, &driver, &14_101u64, &token, &100, &None);
+    assert_eq!(client.get_total_locked(&token), i128::MAX);
+
+    // One more unit would overflow: the deposit is rejected, no funds move,
+    // and no escrow record is written.
+    let result =
+        client.try_create_escrow(&sender, &recipient, &driver, &14_102u64, &token, &1, &None);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, EscrowError::ArithmeticOverflow.into()),
+        other => panic!("expected ArithmeticOverflow, got {other:?}"),
+    }
+    assert_eq!(client.get_total_locked(&token), i128::MAX);
+    assert_eq!(balance(&env, &token, &sender), 1);
+    assert!(client.try_get_escrow(&14_102u64).is_err());
+}
+
+#[test]
+fn test_create_escrows_batch_rejects_total_locked_overflow() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token = setup_token(&env, &token_admin);
+
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 1_000);
+    seed_total_locked(&env, &contract_id, &token, i128::MAX - 150);
+
+    // Second element pushes the running total past i128::MAX: the whole batch
+    // aborts, including the first (individually valid) element.
+    let overflowing = soroban_sdk::vec![
+        &env,
+        (14_201u64, driver.clone(), 100i128, None::<u64>),
+        (14_202u64, driver.clone(), 100i128, None::<u64>),
+    ];
+    let result = client.try_create_escrows_batch(&sender, &recipient, &token, &overflowing);
+    match result {
+        Err(Ok(err)) => assert_eq!(err, EscrowError::ArithmeticOverflow.into()),
+        other => panic!("expected ArithmeticOverflow, got {other:?}"),
+    }
+    assert_eq!(client.get_total_locked(&token), i128::MAX - 150);
+    assert_eq!(balance(&env, &token, &sender), 1_000);
+    assert!(client.try_get_escrow(&14_201u64).is_err());
+
+    // A batch that lands exactly on the boundary succeeds and is fully counted.
+    let fits = soroban_sdk::vec![
+        &env,
+        (14_203u64, driver.clone(), 100i128, None::<u64>),
+        (14_204u64, driver.clone(), 50i128, None::<u64>),
+    ];
+    assert_eq!(client.create_escrows_batch(&sender, &recipient, &token, &fits), 2);
+    assert_eq!(client.get_total_locked(&token), i128::MAX);
+    assert_eq!(balance(&env, &token, &sender), 850);
 }
 
 #[test]
