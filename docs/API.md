@@ -1351,9 +1351,16 @@ Driver marks delivery as actively in transit.
 
 **Authorization:** Assigned driver only
 
+**Preconditions:** The escrow stored under `delivery_id` must fund this
+delivery: its `delivery_id`, `sender`, `recipient` and `driver` must all match
+the delivery record, and it must be `Locked`.
+
 **Errors:**
 - `NotAuthorized` - Caller is not assigned driver
 - `InvalidState` - Delivery not in Active state
+- `DeliveryNotFound` - No escrow exists for the delivery
+- `EscrowMismatch` - The escrow's delivery ID, sender, recipient or driver does not match the delivery
+- `EscrowNotLocked` - The matching escrow is not `Locked`
 
 **Events:** `DeliveryInTransit`
 
@@ -1401,7 +1408,10 @@ delivery_contract.confirm_delivery(&recipient, &delivery_id);
 ```
 
 #### `cancel_delivery`
-Sender cancels a delivery.
+Sender cancels a delivery. Only allowed while the delivery is `Pending` or
+`Active`; once the driver has called `mark_in_transit` the sender can no longer
+cancel. An in-transit delivery can only end through `confirm_delivery`, a
+dispute, or `reclaim_delivery_expired_escrow` after the escrow expires.
 
 **Parameters:**
 - `sender: Address` - Sender address
@@ -1411,7 +1421,16 @@ Sender cancels a delivery.
 
 **Errors:**
 - `NotAuthorized` - Caller is not sender
+- `TransitAlreadyStarted` - Delivery is `InTransit`; the driver already has custody
 - `InvalidState` - Invalid state transition
+- `EscrowNotLocked` - The sender's escrow is paused, in holdback or settled
+
+**Escrow handling:** the escrow under `delivery_id` is refunded only when its
+`delivery_id` and `sender` match this delivery and it is `Locked`; the
+`delivery_cancelled` event then reports its amount. A foreign escrow or an
+already-refunded escrow is left alone, `refund_amount` is `0`, and a
+`cancel_escrow_skipped` event is published with reason `foreign_escrow` or
+`already_refunded`. With no escrow, `refund_amount` is `0`.
 
 **Events:** `delivery_cancelled`
 

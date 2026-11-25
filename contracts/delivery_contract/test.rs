@@ -26,6 +26,10 @@ proptest! {
 
 // ── Mock Escrow Contract with call tracking and failure simulation ───────────────────────────────────────
 
+/// Amount every `MockEscrowContract` escrow reports, so tests can check the
+/// `refund_amount` that `cancel_delivery` publishes.
+const MOCK_ESCROW_AMOUNT: i128 = 500;
+
 #[contract]
 pub struct MockEscrowContract;
 
@@ -178,12 +182,12 @@ impl MockEscrowContract {
             shared_types::EscrowStatus::Locked
         };
         shared_types::EscrowRecord {
-            delivery_id: 0,
+            delivery_id,
             sender,
             recipient,
             driver,
             token: _env.current_contract_address(),
-            amount: 0,
+            amount: MOCK_ESCROW_AMOUNT,
             status,
             created_at: _env.ledger().timestamp(),
             expires_at: None,
@@ -2497,6 +2501,7 @@ fn test_mark_in_transit_succeeds_without_identity_contract() {
     let driver = Address::generate(&env);
     let recipient = Address::generate(&env);
     let delivery_id = client.create_delivery(&admin, &recipient, &get_test_metadata(&env, 1));
+    set_mock_escrow_parties(&env, &client.get_escrow_contract(), &admin, &recipient, &driver);
 
     client.assign_driver(&admin, &delivery_id, &driver);
     client.mark_in_transit(&driver, &delivery_id);
@@ -2810,6 +2815,7 @@ fn test_set_escrow_contract_affects_later_deliveries() {
         env.ledger().timestamp() + shared_types::PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS,
     );
     client.confirm_escrow_contract();
+    set_mock_escrow_parties(&env, &new_escrow_id, &shipper, &recipient, &_driver);
 
     let metadata = get_test_metadata(&env, 1);
     let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
