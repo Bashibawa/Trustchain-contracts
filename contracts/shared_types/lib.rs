@@ -314,7 +314,7 @@ pub mod events {
 
     pub fn settlement_contract_proposed(env: &Env) -> Symbol {
         // Soroban Symbol values are capped at 32 bytes; the fuller
-        // "settlement_contract_change_proposed" (35 bytes) exceeds that.
+        // "settlement_contract_proposed" (35 bytes) exceeds that.
         Symbol::new(env, SETTLEMENT_CONTRACT_PROPOSED)
     }
 
