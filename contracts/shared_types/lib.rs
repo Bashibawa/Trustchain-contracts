@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contracterror, contracttype, Address, String};
+use soroban_sdk::{contracterror, contracttype, panic_with_error, Address, String};
 
 /// Escrows at or above this raw-token amount require two distinct mediator
 /// approvals before a dispute verdict may move funds.
@@ -33,6 +33,23 @@ pub enum TrustchainError {
     LimitExceeded = 12,
     /// A requested timelocked operation was attempted before its delay elapsed.
     TimelockNotElapsed = 13,
+    /// No peer-contract address change is waiting for confirmation.
+    NoPendingContractChange = 14,
+    /// A peer-contract address change is still within its review period.
+    ContractChangeTimelockNotElapsed = 15,
+}
+
+/// Review window applied to changes of cross-contract dependencies.
+pub const PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS: u64 = 3 * 24 * 60 * 60;
+
+/// A proposed peer-contract address that becomes active only after
+/// `activates_at` and an explicit confirmation call.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingPeerContractChange {
+    pub address: Address,
+    pub proposed_by: Address,
+    pub activates_at: u64,
 }
 
 // Event topic constants for on-chain event tracking
@@ -98,6 +115,8 @@ pub mod events {
     pub const SETTLEMENT_CONTRACT_PROPOSED: &str = "settlement_contract_proposed";
     pub const SETTLEMENT_CONTRACT_UPDATED: &str = "settlement_contract_updated";
     pub const DRIVER_PREFERENCE_UPDATED: &str = "driver_preference_updated";
+    pub const SETTLEMENT_SWAP_EXECUTED: &str = "settlement_swap_executed";
+    pub const SETTLEMENT_SWAP_FALLBACK: &str = "settlement_swap_fallback";
     pub const ESCROW_CONTRACT_UPDATED: &str = "escrow_contract_updated";
     pub const ADMIN_TRANSFERRED: &str = "admin_transferred";
     pub const PROTOCOL_PAUSE_STATUS_CHANGED: &str = "protocol_pause_status_changed";
@@ -262,8 +281,11 @@ pub mod events {
         Symbol::new(env, DELIVERY_CONTRACT_UPDATED)
     }
 
+    // Soroban symbols are capped at 32 bytes; the longer
+    // "identity_reputation_contract_updated" (36 bytes) made `Symbol::new`
+    // trap, reverting every `set_identity_reputation_contract` call.
     pub fn identity_reputation_contract_updated(env: &Env) -> Symbol {
-        Symbol::new(env, "identity_reputation_contract_updated")
+        Symbol::new(env, "identity_contract_updated")
     }
 
     pub fn dispute_contract_updated(env: &Env) -> Symbol {
@@ -294,7 +316,7 @@ pub mod events {
 
     pub fn settlement_contract_proposed(env: &Env) -> Symbol {
         // Soroban Symbol values are capped at 32 bytes; the fuller
-        // "settlement_contract_change_proposed" (35 bytes) exceeds that.
+        // "settlement_contract_proposed" (35 bytes) exceeds that.
         Symbol::new(env, SETTLEMENT_CONTRACT_PROPOSED)
     }
 
@@ -306,6 +328,21 @@ pub mod events {
     /// can track driver payout preference changes (Issue #589).
     pub fn driver_preference_updated(env: &Env) -> Symbol {
         Symbol::new(env, DRIVER_PREFERENCE_UPDATED)
+    }
+
+    /// Emitted by `settlement_contract::execute_settlement_swap` after a
+    /// router swap succeeds, binding the measured output to the escrow
+    /// delivery it pays so payments can be reconciled without relying on
+    /// router-specific events.
+    pub fn settlement_swap_executed(env: &Env) -> Symbol {
+        Symbol::new(env, SETTLEMENT_SWAP_EXECUTED)
+    }
+
+    /// Emitted by `escrow_contract` when a driver's preferred-asset swap
+    /// could not be performed and the payout fell back to a direct transfer
+    /// of the escrow token, so the release still completes.
+    pub fn settlement_swap_fallback(env: &Env) -> Symbol {
+        Symbol::new(env, SETTLEMENT_SWAP_FALLBACK)
     }
 
     /// Emitted by `settlement_contract::set_escrow_contract` so indexers can
@@ -341,6 +378,19 @@ pub mod ttl {
 }
 
 pub const SETTLEMENT_SWAP_DEADLINE_WINDOW_SECONDS: u64 = 300;
+
+/// Review period (three days) between proposing and confirming a change to a
+/// peer-contract address.
+pub const PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS: u64 = 3 * 24 * 60 * 60;
+
+/// A proposed peer-contract address change awaiting its timelock.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingPeerContractChange {
+    pub address: soroban_sdk::Address,
+    pub proposed_by: soroban_sdk::Address,
+    pub activates_at: u64,
+}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -636,6 +686,61 @@ pub struct DriverPreferenceUpdatedEvent {
     pub timestamp: u64,
 }
 
+/// Payload of `settlement_swap_executed`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettlementSwapExecutedEvent {
+    /// Escrow contract that requested the swap (the authenticated caller).
+    pub escrow_contract: Address,
+    /// Escrow delivery ID the swap pays out.
+    pub delivery_id: u64,
+    /// Driver whose payout this is and whose preference selected `to_token`.
+    pub driver: Address,
+    /// Token sold (the escrow's settlement token).
+    pub from_token: Address,
+    /// Token bought (the driver's preferred payout asset).
+    pub to_token: Address,
+    /// Address credited with `to_token`.
+    pub recipient: Address,
+    /// Exact `from_token` amount consumed by the router.
+    pub amount_in: i128,
+    /// Actual `to_token` amount received by `recipient`, measured as the
+    /// recipient's balance delta rather than the router's reported value.
+    pub amount_out: i128,
+}
+
+/// Why a preferred-asset payout fell back to a direct transfer.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum SettlementFallbackReason {
+    /// `get_driver_preference` on the settlement contract failed.
+    PreferenceLookupFailed = 0,
+    /// `execute_settlement_swap` failed (router outage, expired approval,
+    /// slippage, binding check, ...). Its state changes were rolled back.
+    SwapFailed = 1,
+}
+
+/// Payload of `settlement_swap_fallback`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SettlementSwapFallbackEvent {
+    /// Escrow delivery ID whose payout fell back.
+    pub delivery_id: u64,
+    /// Driver whose payout this is.
+    pub driver: Address,
+    /// Address that received the direct transfer.
+    pub payout_address: Address,
+    /// Escrow token that was transferred directly.
+    pub token: Address,
+    /// Driver's preferred asset, when it could be read.
+    pub preferred_asset: Option<Address>,
+    /// Amount transferred directly.
+    pub amount: i128,
+    /// Why the swap path was not used.
+    pub reason: SettlementFallbackReason,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowContractUpdatedEvent {
@@ -822,6 +927,39 @@ pub fn is_admin(env: &soroban_sdk::Env, caller: &soroban_sdk::Address) -> bool {
         admin == *caller
     } else {
         false
+    }
+}
+
+/// Validate a set of addresses supplied to a contract's `init`/initial
+/// configuration entry point (Issue #94).
+///
+/// Soroban's `Address` type has no "zero" sentinel to check against — any
+/// syntactically valid address is a legitimate account or contract — so the
+/// validation that *is* meaningful here is structural:
+///   1. No two addresses in `addrs` are identical to each other. A
+///      deployment where, say, `admin` and `token` (or two distinct peer
+///      contracts) resolve to the same address is always a configuration
+///      mistake: it either grants the admin role to a token/contract address
+///      that can never `require_auth` as expected, or wires two peer
+///      contracts together as the same address, which breaks the
+///      cross-contract invariants each caller relies on.
+///   2. None of `addrs` is the contract's own address. A contract can never
+///      legitimately be its own admin or its own peer dependency.
+///
+/// Panics with `TrustchainError::InvalidAddress` on the first violation
+/// found. Called once from each contract's `init`, before any address is
+/// persisted to storage.
+pub fn validate_init_addresses(env: &soroban_sdk::Env, addrs: &[&soroban_sdk::Address]) {
+    let self_address = env.current_contract_address();
+    for (i, addr) in addrs.iter().enumerate() {
+        if **addr == self_address {
+            panic_with_error!(env, TrustchainError::InvalidAddress);
+        }
+        for other in addrs.iter().skip(i + 1) {
+            if addr == other {
+                panic_with_error!(env, TrustchainError::InvalidAddress);
+            }
+        }
     }
 }
 
@@ -1459,6 +1597,8 @@ mod test {
             SETTLEMENT_CONTRACT_PROPOSED => settlement_contract_proposed,
             SETTLEMENT_CONTRACT_UPDATED => settlement_contract_updated,
             DRIVER_PREFERENCE_UPDATED => driver_preference_updated,
+            SETTLEMENT_SWAP_EXECUTED => settlement_swap_executed,
+            SETTLEMENT_SWAP_FALLBACK => settlement_swap_fallback,
             ESCROW_CONTRACT_UPDATED => escrow_contract_updated,
             ADMIN_TRANSFERRED => admin_transferred,
             PROTOCOL_PAUSE_STATUS_CHANGED => protocol_pause_status_changed,
