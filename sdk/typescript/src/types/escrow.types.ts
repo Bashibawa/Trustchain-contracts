@@ -19,6 +19,16 @@ export const EscrowErrorCodes = {
   InvalidSlippageTolerance: 13,
 } as const;
 
+/**
+ * Role discriminant for `get_escrows_page`, matching
+ * `contracts/escrow_contract/lib.rs::get_escrows_page(owner, kind, offset, limit)`.
+ */
+export enum EscrowPartyKind {
+  Sender = 0,
+  Recipient = 1,
+  Driver = 2,
+}
+
 export interface InitParams {
   admin: string;
   token: string;
@@ -38,12 +48,6 @@ export interface VolumeTier {
 export interface SetVolumeTiersParams {
   admin: string;
   tiers: VolumeTier[];
-}
-
-export interface SweepUntrackedBalanceParams {
-  admin: string;
-  token: string;
-  recipient: string;
 }
 
 export interface CreateEscrowParams {
