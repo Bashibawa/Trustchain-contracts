@@ -26,6 +26,8 @@ pub mod constants {
     pub const MAX_BATCH_SIZE: u32 = 100;
     pub const DEFAULT_ESCROW_EXPIRY_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
     pub const MAX_PLATFORM_FEE_BPS: u32 = 1000;
+    /// Basis-point denominator: 10_000 bps == 100%.
+    pub const BPS_DENOMINATOR: i128 = 10_000;
     pub const MAX_SLIPPAGE_TOLERANCE_BPS: u32 = 1000;
     /// Documented upper bound of the per-sender settlement counter
     /// (`get_sender_volume`). Once a sender reaches this value further
@@ -78,7 +80,7 @@ fn require_dispute_resolution_caller(env: &Env, caller: &Address, amount: i128) 
 
     caller.require_auth();
     require_admin(env, caller);
-    if amount >= HIGH_VALUE_DISPUTE_THRESHOLD {
+    if amount >= shared_types::HIGH_VALUE_DISPUTE_THRESHOLD {
         panic_with_error!(env, TrustchainError::Unauthorized);
     }
 }

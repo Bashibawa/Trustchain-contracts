@@ -3933,7 +3933,7 @@ fn test_configured_dispute_contract_blocks_direct_admin_resolution() {
         &driver,
         &1940u64,
         &token,
-        &HIGH_VALUE_DISPUTE_THRESHOLD,
+        &shared_types::HIGH_VALUE_DISPUTE_THRESHOLD,
         &None,
     );
     client.set_dispute_resolution_contract(&admin, &dispute_contract);
