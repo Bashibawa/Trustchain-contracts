@@ -576,7 +576,7 @@ impl DisputeResolutionContract {
             .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         env.events().publish(
             (Symbol::new(&env, "delivery_contract_set"),),
-            (pending.proposed_by, pending.address),
+            (caller, escrow_contract),
         );
     }
 
