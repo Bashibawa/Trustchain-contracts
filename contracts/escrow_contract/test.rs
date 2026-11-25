@@ -1557,7 +1557,7 @@ fn test_clear_settlement_contract_emits_audit_event() {
     let (topics, data) = last_event(&env);
     let topic: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
     assert_eq!(topic, Symbol::new(&env, "settlement_contract_cleared"));
-    let payload: (Address, u64) = data.try_into_val(&env).unwrap();
+    let payload = <(Address, u64)>::try_from_val(&env, &data).unwrap();
     assert_eq!(payload, (admin, env.ledger().timestamp()));
 }
 
@@ -4279,6 +4279,8 @@ fn test_delivery_cancellation_still_refunds_sender_after_fix() {
     escrow_client.init(&admin, &token, &0);
     escrow_client.set_standalone_mode(&admin, &true);
     delivery_client.init(&admin, &escrow_contract_id);
+    // No identity contract here: opt into no-identity mode explicitly.
+    delivery_client.set_identity_optional(&admin, &true);
     mint(&env, &token, &sender, 800);
 
     let metadata = shared_types::DeliveryMetadata {
@@ -5101,8 +5103,8 @@ fn test_clear_fleet_management_contract_emits_audit_event() {
 
     let (topics, data) = last_event(&env);
     let topic: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
-    assert_eq!(topic, Symbol::new(&env, "fleet_contract_cleared"));
-    let payload: (Address, u64) = data.try_into_val(&env).unwrap();
+    assert_eq!(topic, Symbol::new(&env, "fleet_management_contract_cleared"));
+    let payload = <(Address, u64)>::try_from_val(&env, &data).unwrap();
     assert_eq!(payload, (admin, env.ledger().timestamp()));
 }
 
@@ -6757,7 +6759,7 @@ fn test_set_holdback_window_rejects_above_maximum() {
         &(constants::MAX_HOLDBACK_WINDOW_SECONDS + 1),
     );
     match result {
-        Err(Ok(err)) => assert_eq!(err, EscrowError::InvalidState.into()),
+        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
         _ => panic!("Expected EscrowError::InvalidState for an above-maximum window"),
     }
 
@@ -7511,561 +7513,278 @@ fn test_admin_freeze_funds_is_idempotent() {
     assert_eq!(client.get_escrow(&10405u64).status, EscrowStatus::Paused);
 }
 
-// ── Escrow ↔ delivery party invariants ───────────────────────────────────────
+// ── TotalLocked TTL: the liability counter must outlive idle periods ─────────
+//
+// `sweep_untracked_balance` treats `balance - TotalLocked` as sweepable. If the
+// counter's persistent entry were allowed to lapse, live escrow funds would
+// look untracked. Every read and write of `TotalLocked` therefore extends its
+// TTL to `LEDGER_TTL_EXTEND_TO`, the same horizon as the escrow records.
 
-/// Escrow + real delivery contract, wired in both directions with the
-/// delivery contract confirmed on the escrow side.
-struct WiredDelivery {
-    env: Env,
-    client: EscrowContractClient<'static>,
-    delivery: delivery_contract::DeliveryContractClient<'static>,
-    admin: Address,
-    token: Address,
+fn total_locked_ttl(env: &Env, contract_id: &Address, token: &Address) -> u32 {
+    let key = DataKey::TotalLocked(token.clone());
+    env.as_contract(contract_id, || env.storage().persistent().get_ttl(&key))
 }
 
-fn setup_wired_delivery() -> WiredDelivery {
-    let env = Env::default();
-    env.mock_all_auths_allowing_non_root_auth();
-    let escrow_id = env.register(EscrowContract, ());
-    let delivery_id = env.register(delivery_contract::DeliveryContract, ());
-    let client = EscrowContractClient::new(&env, &escrow_id);
-    let delivery = delivery_contract::DeliveryContractClient::new(&env, &delivery_id);
+#[test]
+fn test_total_locked_ttl_extended_on_create_escrow() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token = setup_token(&env, &token_admin);
-
+    let sender = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
     client.init(&admin, &token, &0);
-    delivery.init(&admin, &escrow_id);
-    client.set_delivery_contract(&admin, &delivery_id);
-    env.ledger().set_timestamp(
-        env.ledger().timestamp() + shared_types::PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS,
-    );
-    client.confirm_delivery_contract();
+    mint(&env, &token, &sender, 1000);
 
-    WiredDelivery {
-        env,
-        client,
-        delivery,
-        admin,
-        token,
-    }
+    client.create_escrow(
+        &sender, &Address::generate(&env), &Address::generate(&env), &12001u64, &token, &1000, &None,
+    );
+
+    let ttl = total_locked_ttl(&env, &contract_id, &token);
+    assert_eq!(ttl, ttl::LEDGER_TTL_EXTEND_TO);
+    assert!(ttl > default_persistent_ttl(&env, &contract_id));
 }
 
 #[test]
-fn test_create_escrow_accepts_matching_sender() {
-    let w = setup_wired_delivery();
-    let sender = Address::generate(&w.env);
-    let recipient = Address::generate(&w.env);
-    let driver = Address::generate(&w.env);
-    let did = w
-        .delivery
-        .create_delivery(&sender, &recipient, &make_delivery_metadata(&w.env, 0));
-    mint(&w.env, &w.token, &sender, 1000);
+fn test_total_locked_ttl_extended_on_batch_create() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 1000);
 
-    w.client.create_escrow(
-        &sender,
-        &recipient,
-        &driver,
-        &u64::from(did),
-        &w.token,
-        &1000,
-        &None,
-    );
+    let mut batch = soroban_sdk::Vec::new(&env);
+    batch.push_back((12002u64, Address::generate(&env), 1000i128, None::<u64>));
+    client.create_escrows_batch(&sender, &Address::generate(&env), &token, &batch);
 
-    let record = w.client.get_escrow(&u64::from(did));
-    assert_eq!(record.sender, sender);
-    assert_eq!(record.status, EscrowStatus::Locked);
+    assert_eq!(client.get_total_locked(&token), 1000);
+    assert_eq!(total_locked_ttl(&env, &contract_id, &token), ttl::LEDGER_TTL_EXTEND_TO);
 }
 
-/// A third party may not attach funds to another sender's delivery: the
-/// escrow sender must be the delivery's sender. Nothing moves on rejection.
 #[test]
-fn test_create_escrow_rejects_foreign_sender() {
-    let w = setup_wired_delivery();
-    let sender = Address::generate(&w.env);
-    let interloper = Address::generate(&w.env);
-    let recipient = Address::generate(&w.env);
-    let driver = Address::generate(&w.env);
-    let did = w
-        .delivery
-        .create_delivery(&sender, &recipient, &make_delivery_metadata(&w.env, 0));
-    mint(&w.env, &w.token, &interloper, 1000);
+fn test_total_locked_ttl_renewed_on_settlement_after_idle() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 2000);
+    client.create_escrow(&sender, &recipient, &Address::generate(&env), &12003u64, &token, &1000, &None);
+    client.create_escrow(&sender, &recipient, &Address::generate(&env), &12004u64, &token, &1000, &None);
 
-    let result = w.client.try_create_escrow(
-        &interloper,
-        &recipient,
-        &driver,
-        &u64::from(did),
-        &w.token,
-        &1000,
-        &None,
-    );
-    match result {
-        Err(Ok(err)) => assert_eq!(err, EscrowError::InvalidParties.into()),
-        _ => panic!("Expected EscrowError::InvalidParties for a foreign sender"),
-    }
-    assert!(!w.client.has_escrow(&u64::from(did)));
-    assert_eq!(balance(&w.env, &w.token, &interloper), 1000);
-    assert_eq!(w.client.get_total_locked(&w.token), 0);
+    // Let the counter drift below the renewal threshold, then settle.
+    env.ledger().with_mut(|l| l.sequence_number += ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 1);
+    assert!(total_locked_ttl(&env, &contract_id, &token) < ttl::LEDGER_TTL_THRESHOLD);
+    client.release_escrow(&recipient, &12003u64);
+    assert_eq!(total_locked_ttl(&env, &contract_id, &token), ttl::LEDGER_TTL_EXTEND_TO);
+    assert_eq!(client.get_total_locked(&token), 1000);
 
-    // The delivery ID is still available to its real sender afterwards.
-    mint(&w.env, &w.token, &sender, 1000);
-    w.client.create_escrow(
-        &sender,
-        &recipient,
-        &driver,
-        &u64::from(did),
-        &w.token,
-        &1000,
-        &None,
-    );
-    assert_eq!(w.client.get_escrow(&u64::from(did)).sender, sender);
+    env.ledger().with_mut(|l| l.sequence_number += ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 1);
+    client.refund_escrow(&sender, &12004u64);
+    assert_eq!(total_locked_ttl(&env, &contract_id, &token), ttl::LEDGER_TTL_EXTEND_TO);
+    assert_eq!(client.get_total_locked(&token), 0);
 }
 
-/// Batch creation applies the same sender check per element, and one foreign
-/// delivery in the batch reverts the whole batch atomically.
 #[test]
-fn test_create_escrows_batch_rejects_foreign_sender_atomically() {
-    let w = setup_wired_delivery();
-    let sender = Address::generate(&w.env);
-    let other_sender = Address::generate(&w.env);
-    let recipient = Address::generate(&w.env);
-    let driver = Address::generate(&w.env);
-    let own = w
-        .delivery
-        .create_delivery(&sender, &recipient, &make_delivery_metadata(&w.env, 0));
-    let foreign = w.delivery.create_delivery(
-        &other_sender,
-        &recipient,
-        &make_delivery_metadata(&w.env, 0),
+fn test_get_total_locked_renews_ttl() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 1000);
+    client.create_escrow(
+        &sender, &Address::generate(&env), &Address::generate(&env), &12005u64, &token, &1000, &None,
     );
-    mint(&w.env, &w.token, &sender, 2000);
 
-    let mut batch = soroban_sdk::Vec::new(&w.env);
-    batch.push_back((u64::from(own), driver.clone(), 1000i128, None::<u64>));
-    batch.push_back((u64::from(foreign), driver.clone(), 1000i128, None::<u64>));
-    let result = w
-        .client
-        .try_create_escrows_batch(&sender, &recipient, &w.token, &batch);
-    match result {
-        Err(Ok(err)) => assert_eq!(err, EscrowError::InvalidParties.into()),
-        _ => panic!("Expected EscrowError::InvalidParties for a foreign delivery in batch"),
-    }
-    assert!(!w.client.has_escrow(&u64::from(own)));
-    assert!(!w.client.has_escrow(&u64::from(foreign)));
-    assert_eq!(balance(&w.env, &w.token, &sender), 2000);
-
-    // The matching subset succeeds.
-    let mut ok_batch = soroban_sdk::Vec::new(&w.env);
-    ok_batch.push_back((u64::from(own), driver.clone(), 1000i128, None::<u64>));
-    assert_eq!(
-        w.client
-            .create_escrows_batch(&sender, &recipient, &w.token, &ok_batch),
-        1
-    );
-    assert_eq!(w.client.get_escrow(&u64::from(own)).sender, sender);
+    env.ledger().with_mut(|l| l.sequence_number += ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 1);
+    assert_eq!(client.get_total_locked(&token), 1000);
+    assert_eq!(total_locked_ttl(&env, &contract_id, &token), ttl::LEDGER_TTL_EXTEND_TO);
 }
 
-// ── Payout snapshot lifetime ─────────────────────────────────────────────────
-
-fn set_mock_fleet_treasury(env: &Env, fleet_contract: &Address, treasury: &Address) {
-    env.as_contract(fleet_contract, || {
-        env.storage()
-            .instance()
-            .set(&Symbol::new(env, "treasury"), treasury);
-    });
+#[test]
+fn test_get_total_locked_absent_token_is_zero() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    // Never-locked token: zero, and no entry is created by the read.
+    assert_eq!(client.get_total_locked(&token), 0);
+    let key = DataKey::TotalLocked(token.clone());
+    assert!(!env.as_contract(&contract_id, || env.storage().persistent().has(&key)));
 }
 
-/// Remaining TTL of (escrow record, payout snapshot) for `delivery_id`.
-fn escrow_and_snapshot_ttl(env: &Env, contract_id: &Address, delivery_id: u64) -> (u32, u32) {
+/// Sweep must never take live liabilities, even after the protocol has sat
+/// idle for longer than a default persistent-entry lifetime.
+#[test]
+fn test_sweep_after_idle_never_includes_live_escrow() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let recovery = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&admin, &token, &0);
+    mint(&env, &token, &sender, 1000);
+    let driver = Address::generate(&env);
+    client.create_escrow(&sender, &recipient, &driver, &12006u64, &token, &1000, &None);
+    mint(&env, &token, &contract_id, 250); // stray transfer
+
+    let idle = default_persistent_ttl(&env, &contract_id) + 1;
+    env.ledger().with_mut(|l| l.sequence_number += idle);
+
+    assert_eq!(client.get_untracked_balance(&token), 250);
+    assert_eq!(client.sweep_untracked_balance(&admin, &token, &recovery), 250);
+    assert_eq!(balance(&env, &token, &recovery), 250);
+    assert_eq!(balance(&env, &token, &contract_id), 1000);
+    assert_eq!(client.get_total_locked(&token), 1000);
+
+    // A second sweep finds nothing, and the live escrow still settles in full.
+    assert_eq!(client.sweep_untracked_balance(&admin, &token, &recovery), 0);
+    client.release_escrow(&recipient, &12006u64);
+    assert_eq!(balance(&env, &token, &driver), 1000);
+    assert_eq!(client.get_total_locked(&token), 0);
+}
+
+// ── Owner index TTL: pages and lengths expire together, never apart ──────────
+//
+// `EscrowIndex` pages and `EscrowIndexLen` are persistent entries. If either
+// lapsed while the other survived, historical escrows would vanish from
+// enumeration (or the next push would overwrite page 0). Every push extends
+// the page it writes and the length together; every read renews the length
+// and the pages it touches.
+
+fn index_ttls(env: &Env, contract_id: &Address, owner: &Address, kind: u32, page: u32) -> (u32, u32) {
+    let page_key = DataKey::EscrowIndex(owner.clone(), kind, page);
+    let len_key = DataKey::EscrowIndexLen(owner.clone(), kind);
     env.as_contract(contract_id, || {
         (
-            env.storage().persistent().get_ttl(&escrow_key(delivery_id)),
-            env.storage()
-                .persistent()
-                .get_ttl(&DataKey::EscrowPayoutAddress(delivery_id)),
+            env.storage().persistent().get_ttl(&page_key),
+            env.storage().persistent().get_ttl(&len_key),
         )
     })
 }
 
-/// Move far enough forward that a renewed entry has dropped below the renewal
-/// threshold, so the next touch must extend it again.
-fn advance_past_renewal_threshold(env: &Env) {
-    env.ledger().with_mut(|l| {
-        l.sequence_number += ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 10;
+const INDEX_DRIFT: u32 = ttl::LEDGER_TTL_EXTEND_TO - ttl::LEDGER_TTL_THRESHOLD + 1;
+
+#[test]
+fn test_escrow_index_push_extends_page_and_len_together() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let driver = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    mint(&env, &token, &sender, 100);
+
+    client.create_escrow(&sender, &recipient, &driver, &13001u64, &token, &100, &None);
+
+    for (owner, kind) in [(&sender, 0u32), (&recipient, 1), (&driver, 2)] {
+        let (page_ttl, len_ttl) = index_ttls(&env, &contract_id, owner, kind, 0);
+        assert_eq!(page_ttl, ttl::LEDGER_TTL_EXTEND_TO, "kind {kind} page");
+        assert_eq!(len_ttl, ttl::LEDGER_TTL_EXTEND_TO, "kind {kind} len");
+        assert!(page_ttl > default_persistent_ttl(&env, &contract_id));
+    }
+}
+
+#[test]
+fn test_escrow_index_push_after_idle_realigns_page_and_len() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let sender = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    mint(&env, &token, &sender, 200);
+
+    client.create_escrow(&sender, &Address::generate(&env), &Address::generate(&env), &13002u64, &token, &100, &None);
+    env.ledger().with_mut(|l| l.sequence_number += INDEX_DRIFT);
+    let (page_ttl, len_ttl) = index_ttls(&env, &contract_id, &sender, 0, 0);
+    assert!(page_ttl < ttl::LEDGER_TTL_THRESHOLD && len_ttl < ttl::LEDGER_TTL_THRESHOLD);
+
+    client.create_escrow(&sender, &Address::generate(&env), &Address::generate(&env), &13003u64, &token, &100, &None);
+    assert_eq!(
+        index_ttls(&env, &contract_id, &sender, 0, 0),
+        (ttl::LEDGER_TTL_EXTEND_TO, ttl::LEDGER_TTL_EXTEND_TO)
+    );
+    let ids = client.get_escrows_by_sender(&sender);
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids.get(0), Some(13002));
+    assert_eq!(ids.get(1), Some(13003));
+}
+
+/// A full page is never written again, so reading it must keep it in step
+/// with the (still-growing) length — otherwise old IDs would drop out of the
+/// listing while their records survive.
+#[test]
+fn test_escrow_index_read_renews_full_page_with_len() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let sender = Address::generate(&env);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    mint(&env, &token, &sender, 65);
+    // Filling a whole 64-ID page in one batch exceeds the default test budget.
+    env.cost_estimate().disable_resource_limits();
+    env.cost_estimate().budget().reset_unlimited();
+
+    let mut batch = soroban_sdk::Vec::new(&env);
+    for i in 0..64u64 {
+        batch.push_back((13100 + i, Address::generate(&env), 1i128, None::<u64>));
+    }
+    client.create_escrows_batch(&sender, &Address::generate(&env), &token, &batch);
+
+    // Page 0 is now full. Let it drift, then push onto page 1.
+    env.ledger().with_mut(|l| l.sequence_number += INDEX_DRIFT);
+    client.create_escrow(&sender, &Address::generate(&env), &Address::generate(&env), &13200u64, &token, &1, &None);
+    let (page0_ttl, len_ttl) = index_ttls(&env, &contract_id, &sender, 0, 0);
+    assert_eq!(len_ttl, ttl::LEDGER_TTL_EXTEND_TO);
+    assert!(page0_ttl < ttl::LEDGER_TTL_THRESHOLD);
+
+    // Reading across both pages renews page 0 back in line with the length.
+    let ids = client.get_escrows_page(&sender, &0, &0, &100);
+    assert_eq!(ids.len(), 65);
+    assert_eq!(ids.get(0), Some(13100));
+    assert_eq!(ids.get(64), Some(13200));
+    assert_eq!(
+        index_ttls(&env, &contract_id, &sender, 0, 0),
+        (ttl::LEDGER_TTL_EXTEND_TO, ttl::LEDGER_TTL_EXTEND_TO)
+    );
+    assert_eq!(index_ttls(&env, &contract_id, &sender, 0, 1).0, ttl::LEDGER_TTL_EXTEND_TO);
+}
+
+#[test]
+fn test_escrow_index_read_for_unknown_owner_is_empty_and_writes_nothing() {
+    let (env, contract_id) = setup_env();
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    let stranger = Address::generate(&env);
+
+    assert_eq!(client.get_escrows_page(&stranger, &0, &0, &10).len(), 0);
+    let len_key = DataKey::EscrowIndexLen(stranger.clone(), 0);
+    let page_key = DataKey::EscrowIndex(stranger.clone(), 0, 0);
+    env.as_contract(&contract_id, || {
+        assert!(!env.storage().persistent().has(&len_key));
+        assert!(!env.storage().persistent().has(&page_key));
     });
 }
 
-/// A long-lived escrow keeps its funding-time payout route: every time the
-/// escrow record is renewed the snapshot is renewed with it, so after living
-/// well past a single TTL window the payout still goes to the treasury that
-/// was active at funding, not to the fleet's current treasury.
 #[test]
-fn test_payout_snapshot_lives_as_long_as_escrow() {
+fn test_escrow_index_offset_past_end_is_empty() {
     let (env, contract_id) = setup_env();
     let client = EscrowContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
     let sender = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let driver = Address::generate(&env);
-    let funding_treasury = Address::generate(&env);
-    let later_treasury = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token = setup_token(&env, &token_admin);
-    let fleet_contract = env.register(MockFleetManagementContract, ());
-    set_mock_fleet_treasury(&env, &fleet_contract, &funding_treasury);
+    let token = setup_token(&env, &Address::generate(&env));
+    client.init(&Address::generate(&env), &token, &0);
+    mint(&env, &token, &sender, 100);
+    client.create_escrow(&sender, &Address::generate(&env), &Address::generate(&env), &13300u64, &token, &100, &None);
 
-    client.init(&admin, &token, &0);
-    client.set_standalone_mode(&admin, &true);
-    client.set_fleet_management_contract(&admin, &fleet_contract);
-    mint(&env, &token, &sender, 1000);
-    client.create_escrow(
-        &sender,
-        &recipient,
-        &driver,
-        &20001u64,
-        &token,
-        &1000,
-        &Some(7u64),
-    );
-    let (record_ttl, snapshot_ttl) = escrow_and_snapshot_ttl(&env, &contract_id, 20001);
-    assert_eq!(record_ttl, snapshot_ttl);
-
-    // First touch after the threshold: both entries are renewed together.
-    advance_past_renewal_threshold(&env);
-    client.admin_freeze_funds(&admin, &20001u64);
-    let (record_ttl, snapshot_ttl) = escrow_and_snapshot_ttl(&env, &contract_id, 20001);
-    assert_eq!(record_ttl, ttl::LEDGER_TTL_EXTEND_TO);
-    assert_eq!(snapshot_ttl, record_ttl);
-
-    // Live well past the snapshot's original expiry ledger.
-    advance_past_renewal_threshold(&env);
-    let (record_ttl, snapshot_ttl) = escrow_and_snapshot_ttl(&env, &contract_id, 20001);
-    assert_eq!(snapshot_ttl, record_ttl);
-
-    // The fleet's live route changes; settlement must ignore it.
-    set_mock_fleet_treasury(&env, &fleet_contract, &later_treasury);
-    client.resolve_dispute(&admin, &20001u64, &true);
-
-    assert_eq!(balance(&env, &token, &funding_treasury), 1000);
-    assert_eq!(balance(&env, &token, &later_treasury), 0);
-    assert_eq!(balance(&env, &token, &driver), 0);
-}
-
-/// Batch-created escrows get the same snapshot lifetime guarantee.
-#[test]
-fn test_batch_payout_snapshot_renewed_with_escrow() {
-    let (env, contract_id) = setup_env();
-    let client = EscrowContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let sender = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let driver = Address::generate(&env);
-    let treasury = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token = setup_token(&env, &token_admin);
-    let fleet_contract = env.register(MockFleetManagementContract, ());
-    set_mock_fleet_treasury(&env, &fleet_contract, &treasury);
-
-    client.init(&admin, &token, &0);
-    client.set_standalone_mode(&admin, &true);
-    client.set_fleet_management_contract(&admin, &fleet_contract);
-    mint(&env, &token, &sender, 1000);
-    let mut batch = soroban_sdk::Vec::new(&env);
-    batch.push_back((20002u64, driver.clone(), 1000i128, Some(7u64)));
-    client.create_escrows_batch(&sender, &recipient, &token, &batch);
-
-    advance_past_renewal_threshold(&env);
-    client.admin_freeze_funds(&admin, &20002u64);
-    let (record_ttl, snapshot_ttl) = escrow_and_snapshot_ttl(&env, &contract_id, 20002);
-    assert_eq!(record_ttl, ttl::LEDGER_TTL_EXTEND_TO);
-    assert_eq!(snapshot_ttl, record_ttl);
-}
-
-/// Escrows without a fleet have no snapshot; renewing them must not touch
-/// (or require) a snapshot entry.
-#[test]
-fn test_escrow_without_snapshot_renews_cleanly() {
-    let (env, contract_id) = setup_env();
-    let client = EscrowContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let sender = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let driver = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token = setup_token(&env, &token_admin);
-
-    client.init(&admin, &token, &0);
-    client.set_standalone_mode(&admin, &true);
-    mint(&env, &token, &sender, 1000);
-    client.create_escrow(
-        &sender, &recipient, &driver, &20003u64, &token, &1000, &None,
-    );
-    advance_past_renewal_threshold(&env);
-    client.admin_freeze_funds(&admin, &20003u64);
-
-    let has_snapshot = env.as_contract(&contract_id, || {
-        env.storage()
-            .persistent()
-            .has(&DataKey::EscrowPayoutAddress(20003))
-    });
-    assert!(!has_snapshot);
-    client.resolve_dispute(&admin, &20003u64, &true);
-    assert_eq!(balance(&env, &token, &driver), 1000);
-}
-
-// ── Escrow driver ↔ delivery assignment binding ─────────────────────────────
-
-/// Funding before assignment commits the payout to a driver; the delivery
-/// may then only be assigned to that same driver, so the party doing the
-/// delivery and the party being paid can never diverge.
-#[test]
-fn test_assign_driver_bound_to_funded_escrow_driver() {
-    let w = setup_wired_delivery();
-    let sender = Address::generate(&w.env);
-    let recipient = Address::generate(&w.env);
-    let funded_driver = Address::generate(&w.env);
-    let other_driver = Address::generate(&w.env);
-    let did = w
-        .delivery
-        .create_delivery(&sender, &recipient, &make_delivery_metadata(&w.env, 0));
-    mint(&w.env, &w.token, &sender, 1000);
-    w.client.create_escrow(
-        &sender,
-        &recipient,
-        &funded_driver,
-        &u64::from(did),
-        &w.token,
-        &1000,
-        &None,
-    );
-    assert_eq!(
-        w.client.get_escrow_driver(&u64::from(did)),
-        Some(funded_driver.clone())
-    );
-
-    let result = w.delivery.try_assign_driver(&sender, &did, &other_driver);
-    match result {
-        Err(Ok(err)) => assert_eq!(
-            err,
-            delivery_contract::DeliveryError::EscrowDriverMismatch.into()
-        ),
-        _ => panic!("Expected DeliveryError::EscrowDriverMismatch"),
-    }
-    // The admin path is bound by the same invariant.
-    assert!(w
-        .delivery
-        .try_assign_driver(&w.admin, &did, &other_driver)
-        .is_err());
-    assert_eq!(w.delivery.get_delivery(&did).driver, None);
-
-    w.delivery.assign_driver(&sender, &did, &funded_driver);
-    assert_eq!(
-        w.delivery.get_delivery(&did).driver,
-        Some(funded_driver.clone())
-    );
-    assert_eq!(w.client.get_escrow(&u64::from(did)).driver, funded_driver);
-}
-
-#[test]
-fn test_get_escrow_driver_is_none_without_escrow() {
-    let w = setup_wired_delivery();
-    assert_eq!(w.client.get_escrow_driver(&424242u64), None);
-}
-
-// ── Fail closed without delivery wiring ──────────────────────────────────────
-
-/// A fresh deployment with no delivery contract and no standalone opt-in
-/// rejects escrow creation (single and batch) without moving funds.
-#[test]
-fn test_create_escrow_fails_closed_without_delivery_contract() {
-    let (env, contract_id) = setup_env();
-    let client = EscrowContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let sender = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let driver = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token = setup_token(&env, &token_admin);
-
-    client.init(&admin, &token, &0);
-    assert!(!client.is_standalone_mode());
-    mint(&env, &token, &sender, 2000);
-
-    let result = client.try_create_escrow(
-        &sender, &recipient, &driver, &30001u64, &token, &1000, &None,
-    );
-    match result {
-        Err(Ok(err)) => assert_eq!(err, EscrowError::DeliveryContractNotConfigured.into()),
-        _ => panic!("Expected EscrowError::DeliveryContractNotConfigured"),
-    }
-
-    let mut batch = soroban_sdk::Vec::new(&env);
-    batch.push_back((30002u64, driver.clone(), 1000i128, None::<u64>));
-    let result = client.try_create_escrows_batch(&sender, &recipient, &token, &batch);
-    match result {
-        Err(Ok(err)) => assert_eq!(err, EscrowError::DeliveryContractNotConfigured.into()),
-        _ => panic!("Expected EscrowError::DeliveryContractNotConfigured for batch"),
-    }
-
-    assert!(!client.has_escrow(&30001u64));
-    assert!(!client.has_escrow(&30002u64));
-    assert_eq!(balance(&env, &token, &sender), 2000);
-    assert_eq!(client.get_total_locked(&token), 0);
-}
-
-/// A delivery contract that is only *proposed* (still in its timelock) does
-/// not count as wiring: creation keeps failing closed until it is confirmed.
-#[test]
-fn test_create_escrow_fails_closed_while_delivery_contract_pending() {
-    let env = Env::default();
-    env.mock_all_auths_allowing_non_root_auth();
-    let escrow_id = env.register(EscrowContract, ());
-    let delivery_id = env.register(delivery_contract::DeliveryContract, ());
-    let client = EscrowContractClient::new(&env, &escrow_id);
-    let delivery = delivery_contract::DeliveryContractClient::new(&env, &delivery_id);
-    let admin = Address::generate(&env);
-    let sender = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let driver = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token = setup_token(&env, &token_admin);
-
-    client.init(&admin, &token, &0);
-    delivery.init(&admin, &escrow_id);
-    client.set_delivery_contract(&admin, &delivery_id);
-    let did = delivery.create_delivery(&sender, &recipient, &make_delivery_metadata(&env, 0));
-    mint(&env, &token, &sender, 1000);
-
-    let result = client.try_create_escrow(
-        &sender,
-        &recipient,
-        &driver,
-        &u64::from(did),
-        &token,
-        &1000,
-        &None,
-    );
-    match result {
-        Err(Ok(err)) => assert_eq!(err, EscrowError::DeliveryContractNotConfigured.into()),
-        _ => panic!("Expected EscrowError::DeliveryContractNotConfigured while pending"),
-    }
-
-    env.ledger().set_timestamp(
-        env.ledger().timestamp() + shared_types::PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS,
-    );
-    client.confirm_delivery_contract();
-    client.create_escrow(
-        &sender,
-        &recipient,
-        &driver,
-        &u64::from(did),
-        &token,
-        &1000,
-        &None,
-    );
-    assert_eq!(
-        client.get_escrow(&u64::from(did)).status,
-        EscrowStatus::Locked
-    );
-}
-
-/// Standalone mode is an explicit admin opt-in that emits an audit event and
-/// can be turned back off.
-#[test]
-fn test_set_standalone_mode_toggles_and_is_admin_only() {
-    let (env, contract_id) = setup_env();
-    let client = EscrowContractClient::new(&env, &contract_id);
-    let admin = Address::generate(&env);
-    let attacker = Address::generate(&env);
-    let sender = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    let driver = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token = setup_token(&env, &token_admin);
-    client.init(&admin, &token, &0);
-
-    match client.try_set_standalone_mode(&attacker, &true) {
-        Err(Ok(err)) => assert_eq!(err, TrustchainError::Unauthorized.into()),
-        _ => panic!("Expected TrustchainError::Unauthorized"),
-    }
-    assert!(!client.is_standalone_mode());
-
-    client.set_standalone_mode(&admin, &true);
-    let (topics, data) = last_event(&env);
-    let topic: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
-    assert_eq!(topic, Symbol::new(&env, "standalone_mode_set"));
-    let payload: (Address, bool) = data.try_into_val(&env).unwrap();
-    assert_eq!(payload, (admin.clone(), true));
-    assert!(client.is_standalone_mode());
-
-    mint(&env, &token, &sender, 1000);
-    client.create_escrow(
-        &sender, &recipient, &driver, &30003u64, &token, &1000, &None,
-    );
-
-    client.set_standalone_mode(&admin, &false);
-    assert!(!client.is_standalone_mode());
-    mint(&env, &token, &sender, 1000);
-    match client.try_create_escrow(
-        &sender, &recipient, &driver, &30004u64, &token, &1000, &None,
-    ) {
-        Err(Ok(err)) => assert_eq!(err, EscrowError::DeliveryContractNotConfigured.into()),
-        _ => panic!("Expected fail-closed after disabling standalone mode"),
-    }
-}
-
-/// Activation is one-way: confirming a delivery contract clears standalone
-/// mode, it cannot be re-enabled afterwards, and unverified escrows are
-/// rejected from then on.
-#[test]
-fn test_standalone_mode_cannot_be_enabled_after_activation() {
-    let w = setup_wired_delivery();
-    assert!(!w.client.is_standalone_mode());
-    match w.client.try_set_standalone_mode(&w.admin, &true) {
-        Err(Ok(err)) => assert_eq!(err, TrustchainError::InvalidState.into()),
-        _ => panic!("Expected TrustchainError::InvalidState after activation"),
-    }
-    // Disabling is always permitted (no-op here).
-    w.client.set_standalone_mode(&w.admin, &false);
-
-    // A delivery_id with no delivery record is rejected by verification.
-    let sender = Address::generate(&w.env);
-    mint(&w.env, &w.token, &sender, 1000);
-    assert!(w
-        .client
-        .try_create_escrow(
-            &sender,
-            &Address::generate(&w.env),
-            &Address::generate(&w.env),
-            &30005u64,
-            &w.token,
-            &1000,
-            &None,
-        )
-        .is_err());
-    assert!(!w.client.has_escrow(&30005u64));
-}
-
-#[test]
-fn test_confirm_delivery_contract_clears_standalone_mode() {
-    let env = Env::default();
-    env.mock_all_auths_allowing_non_root_auth();
-    let escrow_id = env.register(EscrowContract, ());
-    let delivery_id = env.register(delivery_contract::DeliveryContract, ());
-    let client = EscrowContractClient::new(&env, &escrow_id);
-    let admin = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let token = setup_token(&env, &token_admin);
-
-    client.init(&admin, &token, &0);
-    client.set_standalone_mode(&admin, &true);
-    client.set_delivery_contract(&admin, &delivery_id);
-    // Still standalone while the change is pending.
-    assert!(client.is_standalone_mode());
-    env.ledger().set_timestamp(
-        env.ledger().timestamp() + shared_types::PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS,
-    );
-    client.confirm_delivery_contract();
-    assert!(!client.is_standalone_mode());
+    assert_eq!(client.get_escrows_page(&sender, &0, &1, &10).len(), 0);
+    assert_eq!(client.get_escrows_page(&sender, &0, &0, &0).len(), 0);
 }

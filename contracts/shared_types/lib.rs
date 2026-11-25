@@ -42,6 +42,8 @@ pub enum TrustchainError {
 /// Review window applied to changes of cross-contract dependencies.
 pub const PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS: u64 = 3 * 24 * 60 * 60;
 
+/// A proposed peer-contract address that becomes active only after
+/// `activates_at` and an explicit confirmation call.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingPeerContractChange {
