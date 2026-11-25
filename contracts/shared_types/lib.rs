@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contracterror, contracttype, Address, String};
+use soroban_sdk::{contracterror, contracttype, panic_with_error, Address, String};
 
 /// Escrows at or above this raw-token amount require two distinct mediator
 /// approvals before a dispute verdict may move funds.
@@ -927,6 +927,39 @@ pub fn is_admin(env: &soroban_sdk::Env, caller: &soroban_sdk::Address) -> bool {
         admin == *caller
     } else {
         false
+    }
+}
+
+/// Validate a set of addresses supplied to a contract's `init`/initial
+/// configuration entry point (Issue #94).
+///
+/// Soroban's `Address` type has no "zero" sentinel to check against — any
+/// syntactically valid address is a legitimate account or contract — so the
+/// validation that *is* meaningful here is structural:
+///   1. No two addresses in `addrs` are identical to each other. A
+///      deployment where, say, `admin` and `token` (or two distinct peer
+///      contracts) resolve to the same address is always a configuration
+///      mistake: it either grants the admin role to a token/contract address
+///      that can never `require_auth` as expected, or wires two peer
+///      contracts together as the same address, which breaks the
+///      cross-contract invariants each caller relies on.
+///   2. None of `addrs` is the contract's own address. A contract can never
+///      legitimately be its own admin or its own peer dependency.
+///
+/// Panics with `TrustchainError::InvalidAddress` on the first violation
+/// found. Called once from each contract's `init`, before any address is
+/// persisted to storage.
+pub fn validate_init_addresses(env: &soroban_sdk::Env, addrs: &[&soroban_sdk::Address]) {
+    let self_address = env.current_contract_address();
+    for (i, addr) in addrs.iter().enumerate() {
+        if **addr == self_address {
+            panic_with_error!(env, TrustchainError::InvalidAddress);
+        }
+        for other in addrs.iter().skip(i + 1) {
+            if addr == other {
+                panic_with_error!(env, TrustchainError::InvalidAddress);
+            }
+        }
     }
 }
 
