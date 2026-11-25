@@ -56,8 +56,8 @@ const ERROR_NAMES: Record<number, string[]> = {
     'TrustchainError.LimitExceeded',
     'FleetError.InternalStorageError',
   ],
-  13: ['EscrowError.InvalidSlippageTolerance', 'FleetError.DriverNotRegistered'],
-  14: ['EscrowError.ArithmeticOverflow'],
+  13: ['FleetError.DriverNotRegistered'],
+  18: ['FleetError.InviteExpired'],
 };
 
 export function formatSorobanError(
