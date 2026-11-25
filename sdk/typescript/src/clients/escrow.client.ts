@@ -2,7 +2,7 @@
  * Typed SDK client for EscrowContract
  */
 
-import * as EscrowTypes from '../types/escrow.types';
+import * EscrowTypes from '../types/escrow.types';
 import { nativeToScVal } from '@stellar/stellar-sdk';
 import { EscrowRecord, ContractInvokeOptions } from '../types/common.types';
 import { ContractInvoker, address, bool, i128, map, u32, u64, vec } from './invoker';
@@ -115,20 +115,30 @@ export class EscrowClient {
   }
 
   /**
-   * Create a new escrow for a delivery
+   * Create a new escrow for a delivery.
+   *
+   * The on-chain `create_escrow` returns unit, so this method resolves to
+   * `void`. The caller supplies `deliveryId` in `params`; that value is the
+   * escrow identifier used by subsequent operations (release, refund, etc.).
    */
-  async createEscrow(params: EscrowTypes.CreateEscrowParams, options?: ContractInvokeOptions): Promise<bigint> {
-    const result = await this.invoker.call('create_escrow', [address(params.sender), address(params.recipient), address(params.driver), u64(params.deliveryId), address(params.token), i128(params.amount), params.fleetId === undefined ? xdrVoid() : u64(params.fleetId)], options);
-    return BigInt(String(result));
+  async createEscrow(params: EscrowTypes.CreateEscrowParams, options?: ContractInvokeOptions): Promise<void> {
+    await this.invoker.call('create_escrow', [address(params.sender), address(params.recipient), address(params.driver), u64(params.deliveryId), address(params.token), i128(params.amount), params.fleetId === undefined ? xdrVoid() : u64(params.fleetId)], options);
   }
 
   /**
-   * Create multiple escrows in a single transaction
+   * Create multiple escrows in a single transaction.
+   *
+   * Contract signature: `create_escrows_batch(sender, recipient, token, escrow_list)`.
+   * The batch call must pass exactly these four arguments — no per-batch fleetId.
+   *
+   * The on-chain `create_escrows_batch` returns a `u32` count of the escrows
+   * created, so this method resolves to that count (`number`), not a list of
+   * escrow IDs.
    */
   async createEscrowsBatch(
     params: EscrowTypes.CreateEscrowBatchParams,
     options?: ContractInvokeOptions
-  ): Promise<bigint[]> {
+  ): Promise<number> {
     // `create_escrows_batch` takes a `Vec<(u64, Address, i128, Option<u64>)>`,
     // so each entry must be encoded as its own Vec ScVal, not a bare array.
     const entries = params.escrowList.map((entry) =>
@@ -139,8 +149,8 @@ export class EscrowClient {
         entry.fleetId === undefined ? xdrVoid() : u64(entry.fleetId),
       ])
     );
-    const result = await this.invoker.call('create_escrows_batch', [address(params.sender), address(params.recipient), address(params.token), u64(params.fleetId ?? 0), vec(entries)], options);
-    return decodeIds(result);
+    const result = await this.invoker.call('create_escrows_batch', [address(params.sender), address(params.recipient), address(params.token), vec(entries)], options);
+    return Number(result);
   }
 
   /**
@@ -590,16 +600,4 @@ function decodeOptionalAddress(value: unknown): string | null {
   return value === null || value === undefined ? null : String(value);
 }
 
-function decodeEscrow(value: unknown): EscrowRecord {
-  const record = value as Record<string, unknown>;
-  return {
-    sender: String(record.sender), recipient: String(record.recipient), driver: String(record.driver),
-    token: String(record.token), amount: BigInt(String(record.amount)), status: record.status as EscrowRecord['status'],
-    createdAt: Number(record.created_at), expiresAt: record.expires_at === null ? undefined : Number(record.expires_at),
-    disputedBy: record.disputed_by === null ? undefined : String(record.disputed_by),
-    disputedAt: record.disputed_at === null ? undefined : Number(record.disputed_at),
-    fleetId: record.fleet_id === null || record.fleet_id === undefined ? undefined : BigInt(String(record.fleet_id)),
-    deliveryId: Number(record.delivery_id ?? 0),
-    holdbackStartedAt: record.holdback_started_at === null ? undefined : Number(record.holdback_started_at),
-  };
-}
+/* … truncated 252 chars — edit only what you need near the top … */

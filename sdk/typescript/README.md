@@ -74,6 +74,24 @@ const result = await client.createEscrow({
 });
 ```
 
+### Create Escrows in Batch
+
+`createEscrowsBatch` returns the number of escrows created, matching the
+contract's `u32` return value. It does **not** return the created escrow IDs.
+
+```typescript
+const createdCount = await client.createEscrowsBatch({
+  sender: 'GA123...',
+  recipient: 'GB456...',
+  driver: 'GC789...',
+  token: 'CCDE...',
+  amount: BigInt(1_000_000_000),
+  deliveryIds: [BigInt(1), BigInt(2), BigInt(3)],
+});
+
+console.log(createdCount); // 3 (a number, not bigint IDs)
+```
+
 ### Release Escrow
 
 ```typescript
@@ -223,6 +241,20 @@ Create a new escrow for a delivery.
 - `params.token`: Token contract address
 - `params.amount`: Escrow amount in token units
 - `params.fleetId`: (Optional) Fleet ID if driver is part of a fleet
+
+##### `createEscrowsBatch(params: CreateEscrowsBatchParams, options?: ContractInvokeOptions): Promise<number>`
+Create multiple escrows in a single invocation. Returns the number of escrows
+created, decoded from the contract's `u32` return value.
+
+**Parameters:**
+- `params.sender`: Address funding the escrows
+- `params.recipient`: Address receiving delivery confirmation
+- `params.driver`: Address of the delivery driver
+- `params.token`: Token contract address
+- `params.amount`: Escrow amount per delivery in token units
+- `params.deliveryIds`: Delivery identifiers to create escrows for
+
+**Returns:** `Promise<number>` — count of escrows created (not escrow IDs).
 
 ##### `releaseEscrow(params: ReleaseEscrowParams, options?: ContractInvokeOptions): Promise<void>`
 Release escrowed funds to the driver after delivery confirmation.
