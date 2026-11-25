@@ -362,6 +362,19 @@ pub mod ttl {
 
 pub const SETTLEMENT_SWAP_DEADLINE_WINDOW_SECONDS: u64 = 300;
 
+/// Review period (three days) between proposing and confirming a change to a
+/// peer-contract address.
+pub const PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS: u64 = 3 * 24 * 60 * 60;
+
+/// A proposed peer-contract address change awaiting its timelock.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingPeerContractChange {
+    pub address: soroban_sdk::Address,
+    pub proposed_by: soroban_sdk::Address,
+    pub activates_at: u64,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeliveryCreatedEvent {

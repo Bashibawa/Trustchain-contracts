@@ -3305,7 +3305,8 @@ Check whether a driver's reputation score meets the enterprise threshold (≥ 75
 Handles cross-border currency swaps during escrow release, allowing drivers to
 receive payment in their preferred asset via an admin-configured swap router.
 The configured router must implement `swap_exact_tokens_for_tokens` with
-`(caller, from_token, to_token, recipient, amount, min_amount_out)` arguments
+`(caller, from_token, to_token, recipient, amount, min_amount_out, deadline)`
+arguments
 and return the actual `amount_out`. It must consume the approved source amount
 and deliver output directly to `recipient`. The escrow funds the settlement
 contract immediately before invoking the swap. Swaps must execute before the
@@ -3346,6 +3347,25 @@ Return the driver's preferred asset for payment, if one has been set.
 
 **Returns:** `Option<Address>`
 
+#### `set_driver_preference`
+Record the asset a driver wants to be paid in, overwriting any previous value.
+
+**Parameters:**
+- `driver: Address` - Driver address (must sign)
+- `to_token: Address` - Payout token contract
+
+`to_token` is probed for the token interface (`decimals()` and `balance()`)
+before it is stored. Account addresses, missing contracts, and contracts that
+do not implement the token interface are rejected, and an existing preference
+is left unchanged.
+
+**Authorization:** Driver (must sign)
+
+**Errors:**
+- `InvalidPreferenceToken` - `to_token` is not a deployed token contract.
+
+**Events:** `driver_preference_updated`
+
 ### Settlement Operations
 
 #### `execute_settlement_swap`
@@ -3367,6 +3387,12 @@ Intended to integrate with the Stellar DEX or a liquidity pool to convert
 
 **Authorization:** Caller (must sign)
 
+**Allowance lifecycle:** the router is approved for exactly `amount` of
+`from_token`, expiring at the next ledger, and that allowance is reset to zero
+as soon as the router returns. After a successful swap the router holds no
+residual allowance over settlement funds; on any failure the approval reverts
+with the rest of the transaction.
+
 **Errors:**
 - `SwapRouterNotConfigured` - No router has been configured.
 - `InvalidSwapParameters` - Amount, token pair, or minimum output is invalid.
@@ -3376,6 +3402,10 @@ Intended to integrate with the Stellar DEX or a liquidity pool to convert
 - `InvalidSwapDeadline` - Deadline is expired or exceeds the 300-second window.
 
 **Returns:** `()`
+
+**TypeScript SDK:** `SettlementClient.executeSettlementSwap({ caller, fromToken,
+toToken, recipient, amount, minAmountOut, deadline })` serializes `deadline`
+(a `bigint` of Unix seconds) as `u64` in the final position.
 
 #### `get_driver_fleet_status`
 Get driver's status in a fleet.
