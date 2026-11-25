@@ -117,13 +117,23 @@ export interface UpdateDeliveryMetadataParams {
 }
 
 /**
- * Parameters for `set_require_kyc`: toggles the KYC gate on `assign_driver`.
+ * Peer-only: `caller` must be the escrow contract configured on the delivery
+ * contract. `reporter` is the account recorded in the `delivery_disputed`
+ * event (the admin who froze the escrow).
  */
-export interface SetRequireKycParams {
-  /** Delivery contract admin; must sign and match the stored admin. */
-  admin: string;
-  /** `true` makes `assign_driver` reject drivers that are not KYC-verified. */
-  required: boolean;
+export interface SyncDisputeFromEscrowParams {
+  caller: string;
+  reporter: string;
+  deliveryId: bigint;
+}
+
+/**
+ * Peer-only: `caller` must be the dispute resolution contract configured on
+ * the delivery contract.
+ */
+export interface ResolveDeliveryDisputeParams {
+  caller: string;
+  deliveryId: bigint;
 }
 
 export interface GetDeliveryParams {
