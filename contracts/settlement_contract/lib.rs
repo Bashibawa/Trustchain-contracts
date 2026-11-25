@@ -2,7 +2,7 @@
 
 use shared_types::{
     is_admin, DriverPreferenceUpdatedEvent, EscrowContractUpdatedEvent, TrustchainError,
-    PendingPeerContractChange, SettlementSwapExecutedEvent, StorageKey,
+    PendingPeerContractChange, StorageKey,
 };
 
 // Settlement contract for cross-border currency swaps through an admin-configured router.
@@ -16,27 +16,12 @@ use soroban_sdk::{
 pub enum DataKey {
     EscrowContract,
     PendingEscrowContract,
+    /// Trusted swap-router contract used by `execute_settlement_swap`.
     SwapRouter,
     /// Per-driver preferred payout asset recorded via
     /// `set_driver_preference` (Issue #459).
     DriverPreference(Address),
-    /// Receipt for a completed swap, keyed by the escrow contract that
-    /// requested it and that escrow's delivery ID. Its presence makes each
-    /// escrow record settleable through this contract at most once.
-    SwapReceipt(Address, u64),
-}
-
-/// Persistent record of a completed settlement swap.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SwapReceipt {
-    pub driver: Address,
-    pub recipient: Address,
-    pub from_token: Address,
-    pub to_token: Address,
-    pub amount_in: i128,
-    pub amount_out: i128,
-    pub settled_at: u64,
+    SwapRouter,
 }
 
 #[contracterror]
@@ -50,12 +35,8 @@ pub enum SettlementError {
     InsufficientSwapBalance = 5,
     SwapInputNotConsumed = 6,
     InvalidSwapDeadline = 7,
-    /// `to_token` does not match the driver's own recorded preference.
-    PreferenceMismatch = 8,
-    /// Recipient is the settlement contract, the router, or the escrow caller.
-    InvalidSwapRecipient = 9,
-    /// A swap for this `(escrow, delivery_id)` has already been settled.
-    SwapAlreadySettled = 10,
+    /// The requested payout token does not implement the token interface.
+    InvalidPreferenceToken = 8,
 }
 
 #[contract]
@@ -174,7 +155,7 @@ impl SettlementContract {
     /// argument and return-value contract used by `execute_settlement_swap`.
     pub fn set_swap_router(env: Env, admin: Address, router: Address) {
         admin.require_auth();
-        if !is_admin(&env, &admin) {
+        if !shared_types::is_admin(&env, &admin) {
             panic_with_error!(&env, TrustchainError::Unauthorized);
         }
         env.storage().instance().set(&DataKey::SwapRouter, &router);
@@ -196,10 +177,19 @@ impl SettlementContract {
     /// survives independently of the contract's instance entry, and both the
     /// preference and instance-entry TTLs are extended on every write (Issue #459).
     ///
+    /// `to_token` must be a deployed contract implementing the token interface:
+    /// it is probed via `decimals()` and `balance()` before anything is
+    /// persisted, and anything else (an account address, a missing contract,
+    /// or a non-token contract) is rejected with `InvalidPreferenceToken`, so
+    /// a bad preference can never make later payouts revert.
+    ///
     /// Emits `driver_preference_updated` so indexers can track preference
     /// changes (Issue #589).
     pub fn set_driver_preference(env: Env, driver: Address, to_token: Address) {
         driver.require_auth();
+        if !is_token_contract(&env, &to_token) {
+            panic_with_error!(&env, SettlementError::InvalidPreferenceToken);
+        }
         let driver_clone = driver.clone();
 
         let key = DataKey::DriverPreference(driver);
@@ -264,36 +254,11 @@ impl SettlementContract {
 
     /// Swap escrow-funded tokens through the configured router.
     ///
-    /// The `amount` of `from_token` is pulled from `caller` (the escrow) at
-    /// the start of the swap, so the escrow must authorize that transfer as a
-    /// sub-invocation (see `escrow_contract::payout_driver`).
-    ///
-    /// `delivery_id` identifies the escrow record this swap pays out. It is
-    /// supplied by `caller`, which must authenticate and must be the
-    /// configured escrow contract, so the identifier is attributable to the
-    /// escrow that holds the record rather than to an arbitrary third party.
-    ///
-    /// # Binding and trust boundary
-    ///
-    /// Settlement independently enforces, without trusting the escrow:
-    /// - `to_token` equals the preference `driver` recorded themselves via
-    ///   `set_driver_preference` (driver-signed), so funds cannot be
-    ///   converted into an asset the driver never asked for;
-    /// - `recipient` is not this contract, the router, or the escrow caller;
-    /// - each `(caller, delivery_id)` settles at most once (receipt stored).
-    ///
-    /// Resolving *which* address receives a driver's payout (the driver, a
-    /// fleet treasury, or a payout address snapshotted at escrow creation) is
-    /// escrow state that settlement cannot read during the call (Soroban
-    /// forbids re-entering the escrow), so `recipient` is trusted to the
-    /// configured escrow. That trust is scoped to the currently confirmed
-    /// escrow address: a rotation only takes effect after the
-    /// `PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS` review period, and the
-    /// previous escrow is rejected as soon as the new one is confirmed.
-    ///
-    /// On success, publishes `settlement_swap_executed` with the token pair,
-    /// recipient, consumed input, measured output and escrow reference, and
-    /// returns the measured output amount.
+    /// The router is approved for exactly `amount` of `from_token` for the
+    /// duration of the call, and that allowance is reset to zero as soon as
+    /// the router returns. After a successful swap the router therefore holds
+    /// no residual allowance; any failure reverts the approval with the rest
+    /// of the transaction.
     pub fn execute_settlement_swap(
         env: Env,
         caller: Address,
@@ -392,6 +357,15 @@ impl SettlementContract {
                 deadline.into_val(&env),
             ],
         );
+
+        // Revoke any residual allowance so the router never retains spend
+        // rights over settlement funds once the swap returns, regardless of
+        // how much of the approved amount it actually consumed.
+        input_token.approve(&current_contract, &router, &0, &env.ledger().sequence());
+
+        if amount_out < min_amount_out {
+            panic_with_error!(&env, SettlementError::SwapOutputBelowMinimum);
+        }
         if input_token.balance(&current_contract) != balance_before - amount {
             panic_with_error!(&env, SettlementError::SwapInputNotConsumed);
         }
@@ -439,6 +413,16 @@ impl SettlementContract {
 
         amount_out
     }
+}
+
+/// Probe `token` for the SEP-41 token interface used by settlement payouts.
+///
+/// Returns `false` if `token` is not a contract or if either probe call fails
+/// or returns a value of the wrong type.
+fn is_token_contract(env: &Env, token: &Address) -> bool {
+    let client = soroban_sdk::token::TokenClient::new(env, token);
+    let decimals_ok = matches!(client.try_decimals(), Ok(Ok(_)));
+    decimals_ok && matches!(client.try_balance(&env.current_contract_address()), Ok(Ok(_)))
 }
 
 #[cfg(test)]

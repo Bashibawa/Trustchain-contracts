@@ -20,37 +20,51 @@ export interface ExecuteSettlementSwapParams {
   recipient: string;
   amount: bigint;
   minAmountOut: bigint;
-  /** Unix timestamp; must be within 300 seconds of the current ledger time. */
-  deadline: bigint | number;
+  /**
+   * Unix timestamp (seconds, u64) after which the swap is rejected. Must not
+   * be in the past and no more than 300 seconds after the current ledger
+   * timestamp (`SETTLEMENT_SWAP_DEADLINE_WINDOW_SECONDS`).
+   */
+  deadline: bigint;
 }
 
 /**
- * Payload of the `settlement_swap_executed` event emitted by
- * `execute_settlement_swap`. Binds the swap output to the escrow delivery it
- * pays, so off-chain reconciliation does not depend on router events.
+ * Review period, in seconds, between `set_escrow_contract` and the earliest
+ * ledger timestamp at which `confirm_escrow_contract` succeeds (3 days).
+ * Mirrors `PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS` in the contracts.
  */
-export interface SettlementSwapExecutedEvent {
-  escrowContract: string;
-  deliveryId: bigint;
-  driver: string;
-  fromToken: string;
-  toToken: string;
-  recipient: string;
-  /** Exact `fromToken` amount consumed by the router. */
-  amountIn: bigint;
-  /** Actual `toToken` amount received by `recipient` (measured balance delta). */
-  amountOut: bigint;
+export const PEER_CONTRACT_CHANGE_TIMELOCK_SECONDS = 259_200n;
+
+export interface ProposeEscrowContractParams {
+  /** Must be the stored settlement admin; the call requires its auth. */
+  admin: string;
+  /** Escrow contract address that becomes active after confirmation. */
+  newEscrow: string;
 }
 
-export const SETTLEMENT_SWAP_EXECUTED_EVENT = 'settlement_swap_executed';
+/**
+ * Mirrors the Rust `PendingPeerContractChange` struct returned by
+ * `get_pending_escrow_contract`. `null` from the client means no proposal is
+ * in flight.
+ */
+export interface PendingEscrowContractChange {
+  /** Proposed escrow contract address. */
+  address: string;
+  /** Admin that submitted the proposal. */
+  proposedBy: string;
+  /**
+   * Ledger timestamp (Unix seconds) from which the change may be confirmed.
+   * The contract accepts confirmation when `now >= activatesAt`.
+   */
+  activatesAt: bigint;
+}
 
-/** Receipt stored for each completed swap, keyed by `(escrow, deliveryId)`. */
-export interface SwapReceipt {
-  driver: string;
-  recipient: string;
-  fromToken: string;
-  toToken: string;
-  amountIn: bigint;
-  amountOut: bigint;
-  settledAt: bigint;
+export interface SetSwapRouterParams {
+  /** Must be the stored settlement admin; the call requires its auth. */
+  admin: string;
+  /**
+   * Router contract (`C...` address) implementing
+   * `swap_exact_tokens_for_tokens`. Overwrites any previously configured router.
+   */
+  router: string;
 }
