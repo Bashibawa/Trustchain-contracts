@@ -194,6 +194,18 @@ impl MockEscrowContract {
         }
     }
 
+    /// Mirrors `escrow_contract::get_escrow_driver`: the funded driver when a
+    /// test has configured escrow parties via `set_parties`, otherwise `None`
+    /// (no funded escrow constrains assignment).
+    pub fn get_escrow_driver(_env: Env, delivery_id: u64) -> Option<Address> {
+        if delivery_id == 7777 {
+            return None;
+        }
+        _env.storage()
+            .temporary()
+            .get(&Symbol::new(&_env, "mock_driver"))
+    }
+
     pub fn set_parties(_env: Env, sender: Address, recipient: Address, driver: Address) {
         _env.storage()
             .temporary()
@@ -284,6 +296,11 @@ pub struct PausedMockEscrowContract;
 
 #[contractimpl]
 impl PausedMockEscrowContract {
+    /// No escrow is funded in these fixtures, so assignment is unconstrained.
+    pub fn get_escrow_driver(_env: Env, _delivery_id: u64) -> Option<Address> {
+        None
+    }
+
     /// Toggled by tests: the protocol must be unpaused while the delivery is
     /// set up (every state-mutating entry point, not just `raise_dispute`,
     /// calls `require_escrow_not_paused`), and paused for the assertion under

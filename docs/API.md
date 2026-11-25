@@ -325,12 +325,35 @@ When configured, both creation entry points:
 2. Verify the supplied `recipient` matches the delivery record.
 3. Verify the supplied `driver` matches the delivery record's driver **if** a
    driver has already been assigned (`assign_driver` has been called). If the
-   driver field is still `None` the check is deferred — escrow creation may
-   precede driver assignment.
+   driver field is still `None` the check is deferred to `assign_driver`,
+   which rejects any driver other than the funded escrow's driver
+   (`EscrowDriverMismatch`).
 
-When **not** configured (i.e. `get_delivery_contract` returns `None`), both
-functions behave exactly as before this change, making the check fully opt-in
-for existing deployments.
+When **not** configured (i.e. `get_delivery_contract` returns `None`, which
+includes the period while a proposed address is still in its timelock), both
+functions **fail closed** with `DeliveryContractNotConfigured` unless the admin
+has explicitly enabled standalone mode (see `set_standalone_mode`).
+
+#### `set_standalone_mode`
+Explicitly opt a deployment in or out of standalone mode, in which escrows are
+created without a backing delivery contract and delivery verification is
+skipped. Off by default.
+
+**Parameters:**
+- `admin: Address` - Protocol admin
+- `enabled: bool` - Whether standalone mode is on
+
+**Authorization:** Admin only
+
+**Errors:**
+- `Unauthorized` - Caller is not the admin
+- `InvalidState` - `enabled = true` while a delivery contract is active
+
+**Events:** `standalone_mode_set` with `(admin, enabled)`
+
+Activation is one-way: `confirm_delivery_contract` clears standalone mode, and
+it cannot be re-enabled while a delivery contract is active. `is_standalone_mode`
+returns the current flag.
 
 **Design note:** the check adds one `get_delivery` cross-contract call to the
 escrow-creation hot path. The integrity benefit — preventing orphaned escrows and

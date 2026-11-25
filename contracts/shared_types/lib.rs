@@ -279,6 +279,9 @@ pub mod events {
         Symbol::new(env, DELIVERY_CONTRACT_UPDATED)
     }
 
+    // Soroban symbols are capped at 32 bytes; the longer
+    // "identity_reputation_contract_updated" (36 bytes) made `Symbol::new`
+    // trap, reverting every `set_identity_reputation_contract` call.
     pub fn identity_reputation_contract_updated(env: &Env) -> Symbol {
         Symbol::new(env, "identity_contract_updated")
     }
